@@ -37,6 +37,7 @@ def create_app(config_name=None):
 def register_blueprints(app):
     from app.routes.auth import auth_bp
     from app.routes.cours import cours_bp
+    from app.routes.docs import docs_bp
     from app.routes.eleves import eleves_bp
     from app.routes.health import health_bp
     from app.routes.maisons import maisons_bp
@@ -44,6 +45,7 @@ def register_blueprints(app):
 
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp)
+    app.register_blueprint(docs_bp)
     app.register_blueprint(maisons_bp)
     app.register_blueprint(professeurs_bp)
     app.register_blueprint(cours_bp)
