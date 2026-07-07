@@ -1,0 +1,8 @@
+Flask==3.0.3
+Flask-SQLAlchemy==3.1.1
+python-dotenv==1.0.1
+pytest==8.2.2
+
+# Ajoutés plus tard dans le projet, pas nécessaires au jour 1 :
+# marshmallow ou pydantic (validation stricte des payloads, jour 4)
+# Flask-Migrate (si vous préférez gérer des migrations plutôt que de recréer la base à chaque seed)

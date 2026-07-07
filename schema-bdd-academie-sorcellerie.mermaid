@@ -1,0 +1,146 @@
+erDiagram
+    ANNEE_ACADEMIQUE ||--o{ COURS : encadre
+    MAISON ||--o{ ELEVE : regroupe
+    MAISON ||--o{ TOURNOI : organise
+    PROFESSEUR ||--o{ COURS : enseigne
+    COURS ||--o{ EXAMEN : comporte
+    COURS ||--o{ INSCRIPTION : recoit
+    ELEVE ||--o{ INSCRIPTION : "s'inscrit a"
+    ELEVE ||--o{ RESULTAT : obtient
+    EXAMEN ||--o{ RESULTAT : genere
+    ELEVE ||--o{ MAITRISE : acquiert
+    COMPETENCE ||--o{ MAITRISE : "est acquise via"
+    EXAMEN ||--o{ COMPETENCE : conditionne
+    EXAMEN ||--o{ MAITRISE : "source examen"
+    TOURNOI ||--o{ MAITRISE : "source tournoi"
+    ELEVE ||--o| UTILISATEUR : possede
+    PROFESSEUR ||--o| UTILISATEUR : possede
+    TOURNOI ||--o{ DUEL : comprend
+    ELEVE ||--o{ DUEL : "participe (1)"
+    ELEVE ||--o{ DUEL : "participe (2)"
+    ELEVE ||--o{ DUEL : "remporte (optionnel)"
+    ELEVE ||--o{ TOURNOI : "remporte (optionnel)"
+
+    MAISON {
+        int id PK
+        string nom
+        string couleur
+        string fondateur
+        string valeurs
+        int reputation
+        datetime created_at
+        datetime updated_at
+    }
+    PROFESSEUR {
+        int id PK
+        string nom
+        string matiere_enseignee
+        int anciennete
+        datetime created_at
+        datetime updated_at
+    }
+    ANNEE_ACADEMIQUE {
+        int id PK
+        string libelle
+        float seuil_promotion
+        datetime cloturee_le
+        datetime created_at
+        datetime updated_at
+    }
+    COURS {
+        int id PK
+        string intitule
+        int niveau_requis
+        int capacite_max
+        int professeur_id FK
+        int annee_academique_id FK
+        datetime created_at
+        datetime updated_at
+    }
+    ELEVE {
+        int id PK
+        string nom
+        int annee_etude
+        int maison_id FK
+        string familier
+        string statut
+        datetime created_at
+        datetime updated_at
+    }
+    UTILISATEUR {
+        int id PK
+        string email
+        string mot_de_passe
+        string role
+        int eleve_id FK
+        int professeur_id FK
+        datetime created_at
+        datetime updated_at
+    }
+    INSCRIPTION {
+        int id PK
+        int eleve_id FK
+        int cours_id FK
+        date date_inscription
+        string statut
+        datetime created_at
+        datetime updated_at
+    }
+    EXAMEN {
+        int id PK
+        int cours_id FK
+        string titre
+        date date
+        float seuil_reussite
+        datetime created_at
+        datetime updated_at
+    }
+    RESULTAT {
+        int id PK
+        int eleve_id FK
+        int examen_id FK
+        float note
+        datetime created_at
+        datetime updated_at
+    }
+    COMPETENCE {
+        int id PK
+        string nom
+        string categorie
+        string description
+        string condition_type
+        int examen_id FK
+        float note_min
+        datetime created_at
+        datetime updated_at
+    }
+    MAITRISE {
+        int id PK
+        int eleve_id FK
+        int competence_id FK
+        date date_obtention
+        string source
+        int source_examen_id FK
+        int source_tournoi_id FK
+        datetime created_at
+        datetime updated_at
+    }
+    TOURNOI {
+        int id PK
+        string nom
+        int annee
+        int maison_organisatrice_id FK
+        int vainqueur_eleve_id FK
+        datetime cloture_le
+        datetime created_at
+        datetime updated_at
+    }
+    DUEL {
+        int id PK
+        int tournoi_id FK
+        int eleve_1_id FK
+        int eleve_2_id FK
+        int vainqueur_id FK
+        datetime created_at
+        datetime updated_at
+    }
