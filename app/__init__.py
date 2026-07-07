@@ -23,6 +23,12 @@ def create_app(config_name=None):
 
     db.init_app(app)
 
+    # Enregistre toutes les entités sur la metadata de db.Model : sans cet
+    # import, db.create_all() ne créerait aucune table (rien ne les lui
+    # aurait présentées), et les relationship() en chaîne de caractères
+    # d'un module à l'autre ne se résoudraient pas.
+    from app import models  # noqa: F401
+
     register_blueprints(app)
 
     return app
