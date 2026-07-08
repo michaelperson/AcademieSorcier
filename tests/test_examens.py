@@ -244,3 +244,87 @@ def test_cloture_cours_sans_resultat_refuse(client, cours, eleve):
 def test_cloture_cours_eleve_non_inscrit(client, cours, eleve):
     reponse = client.post(f"/cours/{cours.id}/cloture?eleve_id={eleve.id}")
     assert reponse.status_code == 404
+
+
+def _entetes_admin(utilisateur_admin):
+    return {"X-User-Id": str(utilisateur_admin.id)}
+
+
+def _creer_competence_examen(client, examen, note_min, utilisateur_admin, nom="Sort de Stupéfixion"):
+    return client.post(
+        "/competences",
+        json={
+            "nom": nom,
+            "categorie": "Sorts offensifs",
+            "description": "Immobilise un adversaire à distance.",
+            "condition_type": "examen",
+            "examen_id": examen["id"],
+            "note_min": note_min,
+        },
+        headers=_entetes_admin(utilisateur_admin),
+    ).get_json()
+
+
+def test_evaluer_competences_debloque_maitrise_si_seuil_atteint(
+    client, cours, eleve, eleve_2, examen, utilisateur_admin
+):
+    """Test métier du jour 3 : évaluer les compétences après une clôture
+    d'examen débloque une Maitrise seulement pour les élèves dont la note
+    atteint le seuil PROPRE à la compétence (pas forcément celui de
+    l'examen).
+    """
+    _creer_competence_examen(client, examen, note_min=12, utilisateur_admin=utilisateur_admin)
+
+    client.post(f"/cours/{cours.id}/inscriptions", json={"eleve_id": eleve.id})
+    client.post(f"/cours/{cours.id}/inscriptions", json={"eleve_id": eleve_2.id})
+    client.post(
+        f"/examens/{examen['id']}/resultats",
+        json={
+            "resultats": [
+                {"eleve_id": eleve.id, "note": 15},  # au-dessus du seuil de la compétence (12)
+                {"eleve_id": eleve_2.id, "note": 11},  # en dessous
+            ]
+        },
+    )
+    client.post(f"/examens/{examen['id']}/cloture")
+
+    reponse = client.post(f"/examens/{examen['id']}/evaluer-competences")
+    assert reponse.status_code == 200
+    corps = reponse.get_json()
+    eleves_debloques = {m["eleve_id"] for m in corps["maitrises_creees"]}
+    assert eleves_debloques == {eleve.id}
+
+
+def test_evaluer_competences_refuse_si_examen_pas_cloture(
+    client, cours, eleve, examen, utilisateur_admin
+):
+    _creer_competence_examen(client, examen, note_min=12, utilisateur_admin=utilisateur_admin)
+    client.post(f"/cours/{cours.id}/inscriptions", json={"eleve_id": eleve.id})
+    client.post(
+        f"/examens/{examen['id']}/resultats",
+        json={"resultats": [{"eleve_id": eleve.id, "note": 15}]},
+    )
+
+    reponse = client.post(f"/examens/{examen['id']}/evaluer-competences")
+    assert reponse.status_code == 400
+
+
+def test_evaluer_competences_est_idempotent(client, cours, eleve, examen, utilisateur_admin):
+    """Idempotence obligatoire du jour 3 : un élève qui repasse au-dessus
+    du même seuil ne débloque jamais deux fois la même compétence.
+    """
+    _creer_competence_examen(client, examen, note_min=12, utilisateur_admin=utilisateur_admin)
+    client.post(f"/cours/{cours.id}/inscriptions", json={"eleve_id": eleve.id})
+    client.post(
+        f"/examens/{examen['id']}/resultats",
+        json={"resultats": [{"eleve_id": eleve.id, "note": 15}]},
+    )
+    client.post(f"/examens/{examen['id']}/cloture")
+
+    premiere = client.post(f"/examens/{examen['id']}/evaluer-competences").get_json()
+    assert len(premiere["maitrises_creees"]) == 1
+    assert len(premiere["deja_debloquees"]) == 0
+
+    seconde = client.post(f"/examens/{examen['id']}/evaluer-competences").get_json()
+    assert len(seconde["maitrises_creees"]) == 0
+    assert len(seconde["deja_debloquees"]) == 1

@@ -27,9 +27,34 @@ Chasse au N+1 : mesure réelle (pas théorique) des requêtes SQL sur `GET /cour
 
 Gestion d'erreurs centralisée et logging (`app/error_handlers.py`, `app/logging_config.py`) : ajoutés hors cahier des charges, à la suite d'un bug réel rencontré en cours de route (une base non initialisée renvoyait une page HTML de débogage au lieu d'une erreur JSON). Détail plus bas dans cette section.
 
-72 tests passent (`pytest`), dont les tests métier attendus par le cahier des charges : refus d'inscription sur cours complet, décision réussi/échec à la clôture d'un examen, et mise à jour de l'inscription à la clôture d'un cours.
+Jour 3 fait :
 
-Reste à faire : jour 3 — compétences, maîtrise, tournoi, duel. Voir "Où continuer" plus bas.
+Compétence (`app/routes/competences.py`) : catalogue de compétences, lecture publique et écriture réservée à l'admin (`role_requis(RoleUtilisateur.ADMIN)` — voir plus bas pourquoi ce jour-ci change la règle du jour 1). Chaque compétence porte une condition de déblocage, `condition_type` valant `examen` ou `tournoi` :
+
+- condition `examen` : `examen_id` et `note_min` obligatoires à la création (vérifiés en base, l'examen doit exister) — la compétence se débloque quand un élève atteint cette note à cet examen précis.
+- condition `tournoi` : `examen_id` et `note_min` n'ont pas de sens et sont forcés à `null`, quoi que le payload contienne — la compétence se débloque au vainqueur d'un tournoi.
+
+Listing paginé et filtrable par catégorie (`GET /competences?categorie=...&page=...&par_page=...`), pagination implémentée à la main dans `app/pagination.py` (pas de dépendance ajoutée pour ça).
+
+Maîtrise : pas de route dédiée — une Maîtrise n'est jamais créée à la main, seulement comme conséquence d'un des deux endpoints métier ci-dessous. C'est ce qui garantit qu'une compétence "débloquée par examen" l'est vraiment par un examen, pas par une écriture directe qui contournerait la condition.
+
+Endpoint métier 1 — évaluer les compétences débloquées par un examen (`POST /examens/<id>/evaluer-competences`) : exige que l'examen ait déjà été clôturé (`POST /examens/<id>/cloture`, jour 2) ; pour chaque compétence à condition `examen` liée à cet examen, parcourt les résultats et crée une `Maitrise` pour chaque élève dont la note atteint `note_min`. Idempotent : rejouer l'appel ne crée pas de doublon, grâce à la contrainte unique `(eleve_id, competence_id)` posée sur `Maitrise` — l'endpoint distingue d'ailleurs dans sa réponse les maîtrises nouvellement créées de celles déjà acquises.
+
+Tournoi et Duel (`app/routes/tournois.py`) : CRUD restreint côté écriture à l'admin, lecture publique, paginé et filtrable par année (`GET /tournois?annee=...`). Un duel s'enregistre déjà joué (`POST /tournois/<id>/duels` avec le vainqueur inclus dans le payload), ce n'est pas une programmation de rencontre à venir.
+
+Endpoint métier 2 — clôturer un tournoi (`POST /tournois/<id>/cloture`) : compte les victoires en duel par élève, désigne le vainqueur, débloque pour lui toutes les compétences à condition `tournoi` non encore acquises, et ajoute `POINTS_REPUTATION_VICTOIRE_TOURNOI` (10, constante en tête de fichier) à la réputation de sa maison. Trois refus (400) volontaires :
+
+- tournoi déjà clôturé (`cloture_le` non nul) : garde anti-rejeu, on ne recompte pas les victoires et on ne redistribue pas de réputation une seconde fois.
+- aucun duel enregistré : rien à départager.
+- égalité stricte entre plusieurs élèves au nombre de victoires : la réponse renvoie `eleves_ex_aequo` plutôt que de trancher arbitrairement (premier inscrit, id le plus petit...) une décision qui affecte la réputation d'une maison entière. Un professeur tranche à la main en ajoutant un duel de départage, puis relance la clôture.
+
+Espace élève, deux ajouts : `GET /moi/competences` (les compétences débloquées par l'élève courant) et `GET /moi/tournois` (l'historique de ses duels, avec l'adversaire et l'issue — `gagne`, `perdu` ou `en_attente` si le duel n'a pas encore de vainqueur).
+
+Seed enrichi : 5 examens et 19 compétences (15 à condition `examen`, réparties sur 5 catégories à raison de 3 seuils de note chacune ; 4 à condition `tournoi`).
+
+99 tests passent (`pytest`), dont les scénarios métier propres au jour 3 : idempotence du déblocage de compétence, déblocage + réputation à la clôture d'un tournoi, refus du rejeu d'une clôture, et refus en cas d'égalité.
+
+Reste à faire : jour 4 — validation stricte des payloads, passage de fin d'année, volume réaliste, documentation finale. Voir "Où continuer" plus bas.
 
 ### Gestion d'erreurs et logging
 
@@ -52,6 +77,7 @@ Pourquoi ajouter ça maintenant, hors planning : en testant l'API sans avoir lan
 │   ├── error_handlers.py # gestion centralisée des exceptions (HTTPException, SQLAlchemyError, Exception)
 │   ├── logging_config.py # logger applicatif + journal d'accès (before_request/after_request)
 │   ├── openapi_spec.py   # spec OpenAPI écrite à la main (dict Python)
+│   ├── pagination.py     # pagination manuelle (page/par_page/total/pages) pour les listings jour 3
 │   ├── models/
 │   │   ├── __init__.py       # agrège les imports, nécessaire à db.create_all()
 │   │   ├── mixins.py          # TimestampMixin (created_at / updated_at)
@@ -78,9 +104,11 @@ Pourquoi ajouter ça maintenant, hors planning : en testant l'API sans avoir lan
 │       ├── cours.py           # CRUD Cours
 │       ├── eleves.py          # CRUD Élève
 │       ├── inscriptions.py    # POST /cours/<id>/inscriptions, GET /cours/<id>/eleves (N+1)
-│       ├── examens.py         # CRUD Examen, résultats en masse, clôture d'examen, clôture de cours
+│       ├── examens.py         # CRUD Examen, résultats en masse, clôture d'examen, clôture de cours, évaluer-competences
 │       ├── resultats.py       # GET /resultats, GET /cours/<id>/moyenne
-│       └── espace_eleve.py    # GET /moi/cours, /moi/notes, /moi/dossier
+│       ├── espace_eleve.py    # GET /moi/cours, /moi/notes, /moi/dossier, /moi/competences, /moi/tournois
+│       ├── competences.py     # CRUD Compétence (lecture publique, écriture admin), paginé + filtre catégorie
+│       └── tournois.py        # CRUD Tournoi/Duel (lecture publique, écriture admin), clôture de tournoi
 ├── tests/
 │   ├── conftest.py         # fixtures app / client / maison / professeur / cours / eleve(s) / utilisateurs
 │   ├── test_health.py
@@ -93,10 +121,12 @@ Pourquoi ajouter ça maintenant, hors planning : en testant l'API sans avoir lan
 │   ├── test_examens.py
 │   ├── test_espace_eleve.py
 │   ├── test_resultats.py
-│   └── test_error_handlers.py
+│   ├── test_error_handlers.py
+│   ├── test_competences.py
+│   └── test_tournois.py
 ├── config.py             # Config (dev) / TestingConfig, dont LOG_LEVEL / LOG_TO_FILE
 ├── run.py                # lance le serveur de développement
-├── seed.py               # peuple la base (4 maisons, 30 élèves, 5 professeurs, 5 cours, comptes)
+├── seed.py               # peuple la base (4 maisons, 30 élèves, 5 professeurs, 5 cours, 5 examens, 19 compétences, comptes)
 ├── PERFORMANCE.md        # chasse au N+1 : méthode de mesure, résultats, correctif
 ├── logs/                 # créé si LOG_TO_FILE=True (ignoré par git)
 ├── requirements.txt
@@ -116,6 +146,10 @@ Pourquoi deux statuts séparés, `Resultat.statut` et `Inscription.statut` : ce 
 Pourquoi le mode sans `eleve_id` de `/cours/<id>/cloture` ne modifie rien : c'est un rapport, pas une clôture en masse. Clôturer tous les élèves d'un coup sans validation professeur par professeur serait un raccourci que le cahier des charges ne demande pas explicitement (il ne parle que d'un `eleve_id` facultatif, pas d'un mode "tout clôturer") ; le mode rapport permet de vérifier les moyennes avant de déclencher les mises à jour une par une.
 
 Pourquoi le chargement anticipé (`joinedload`) est optionnel plutôt qu'activé par défaut : voir `PERFORMANCE.md`. En résumé, le coût existe (plus de colonnes ramenées par ligne) et n'a de sens que sur un accès en boucle — l'imposer partout serait une optimisation prématurée.
+
+Pourquoi l'écriture sur Compétence et Tournoi est réservée à l'admin, contrairement au CRUD ouvert du jour 1 : le cahier des charges distingue explicitement, pour le jour 3, les actions "administratives" (créer une compétence, organiser un tournoi) des consultations élève. Ce n'est pas une incohérence avec le choix du jour 1 (voir plus haut) mais un changement de nature : Maison/Professeur/Cours/Élève sont des données de référence qu'il fallait pouvoir manipuler librement pour vérifier le CRUD, alors que Compétence et Tournoi pilotent des effets de bord réels sur la réputation d'une maison — les protéger dès leur introduction évite d'avoir à revenir dessus plus tard. `GET /cours/<id>/eleves` et consorts restent des exemples de lecture ouverte au jour 1 ; ici, seule l'écriture change de régime, la lecture (catalogue de compétences, liste de tournois) reste publique.
+
+Pourquoi `joinedload()` est appliqué directement sur `GET /tournois/<id>/duels` et `GET /moi/tournois`, sans passer par un paramètre `?eager=` comme au jour 2 : ces deux listings chargent systématiquement les noms des élèves associés à chaque duel (`eleve_1`, `eleve_2`, `vainqueur`) pour construire la réponse — il n'existe pas de cas d'usage où ces informations ne seraient pas nécessaires, contrairement à `/cours/<id>/eleves` où le mode "sans eager" a un intérêt réel (mesuré dans `PERFORMANCE.md`). Rendre le chargement anticipé optionnel n'aurait ajouté qu'un paramètre inutile.
 
 ## Mise en route
 
@@ -179,6 +213,28 @@ curl -X POST "http://127.0.0.1:5000/cours/1/cloture?eleve_id=1"
 # Gestion d'erreurs centralisée : réponse JSON, pas une page HTML
 curl http://127.0.0.1:5000/route-qui-nexiste-pas
 curl -X DELETE http://127.0.0.1:5000/health
+
+# Compétences : catalogue public, paginé
+curl "http://127.0.0.1:5000/competences?categorie=Sorts%20offensifs&page=1&par_page=10"
+
+# Débloquer les compétences d'un examen après sa clôture (avec le compte admin)
+curl -X POST http://127.0.0.1:5000/examens/1/cloture
+curl -X POST http://127.0.0.1:5000/examens/1/evaluer-competences -H "X-User-Id: 36"
+
+# Tournoi : créer, enregistrer un duel, puis clôturer (toutes ces écritures exigent l'admin)
+curl -X POST http://127.0.0.1:5000/tournois \
+  -H "Content-Type: application/json" -H "X-User-Id: 36" \
+  -d '{"nom": "Tournoi de printemps", "annee": 2026}'
+
+curl -X POST http://127.0.0.1:5000/tournois/1/duels \
+  -H "Content-Type: application/json" -H "X-User-Id: 36" \
+  -d '{"eleve_1_id": 1, "eleve_2_id": 2, "vainqueur_id": 1}'
+
+curl -X POST http://127.0.0.1:5000/tournois/1/cloture -H "X-User-Id: 36"
+
+# Espace élève : compétences et historique de tournois de l'élève connecté
+curl http://127.0.0.1:5000/moi/competences -H "X-User-Id: 1"
+curl http://127.0.0.1:5000/moi/tournois -H "X-User-Id: 1"
 ```
 
 Tous les comptes créés par `seed.py` utilisent le mot de passe `motdepasse123` (élèves et professeurs) ou `admin123` (le compte admin), sur le modèle `prenom.nom@academie-sorcellerie.fr`.
@@ -187,10 +243,14 @@ Ouvrez `http://127.0.0.1:5000/docs` dans un navigateur pour la documentation int
 
 ## Où continuer
 
-Le jour 2 est complet au sens du cahier des charges. La suite, c'est le jour 3 :
+Le jour 3 est complet au sens du cahier des charges. La suite, c'est le jour 4 :
 
-Compétence et Maîtrise : modéliser les compétences qu'un élève peut acquérir dans une matière, avec un niveau de maîtrise qui progresse (probablement via les résultats d'examen ou une validation manuelle — à trancher en équipe, le cahier des charges laisse la mécanique ouverte).
+Validation stricte des payloads : les routes actuelles vérifient les champs à la main (présence, type, cohérence — voir par exemple `_valider_payload_competence` dans `app/routes/competences.py`), ce qui devient répétitif à mesure que le nombre de ressources augmente. Introduire marshmallow ou pydantic pour centraliser cette validation est le genre de refactor à faire une fois, plutôt que de continuer à l'écrire à la main route par route.
 
-Tournoi et Duel : organiser des duels entre élèves dans le cadre d'un tournoi, avec un vainqueur et un impact sur la réputation de la maison (`Maison.reputation`, déjà présent en base mais jamais modifié jusqu'ici — jour 3 est l'endroit où ce champ prend enfin un sens).
+Passage de fin d'année : un endpoint qui, à partir des statuts d'inscription et des moyennes calculées au jour 2, décide pour chaque élève promotion, redoublement ou diplomation (au-delà de la dernière année d'étude). C'est la pièce qui referme la boucle du cahier des charges : jusqu'ici, `StatutEleve` (actif/diplome/renvoye, voir `app/models/enums.py`) existe mais rien ne le fait jamais passer à `diplome`.
 
-Comme pour le jour 2 : ajoutez les nouveaux endpoints à `app/openapi_spec.py` au fur et à mesure, et si un nouvel endpoint de listing boucle sur une relation, vérifiez d'abord s'il y a un N+1 avant de l'écrire en dur — le réflexe posé dans `PERFORMANCE.md` vaut pour la suite du projet, pas seulement pour `/cours/<id>/eleves`.
+Volume réaliste dans le seed : les 30 élèves actuels suffisent pour tester manuellement, mais un jeu de données plus large (quelques centaines d'élèves, plusieurs années académiques) est ce qui permettrait de vérifier que la pagination introduite au jour 3 (`app/pagination.py`) et les requêtes de listing tiennent la charge, plutôt que de le supposer.
+
+Documentation finale : une collection Postman ou un `README.md` récapitulatif consolidé (au lieu du "point de départ, pas une base à compléter à l'identique" de l'introduction) sont attendus en livrable de fin de projet.
+
+Comme pour les jours précédents : ajoutez les nouveaux endpoints à `app/openapi_spec.py` au fur et à mesure, et si un nouvel endpoint de listing boucle sur une relation, vérifiez d'abord s'il y a un N+1 avant de l'écrire en dur — le réflexe posé dans `PERFORMANCE.md` vaut pour la suite du projet, pas seulement pour `/cours/<id>/eleves`.

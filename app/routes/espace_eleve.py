@@ -1,15 +1,18 @@
 """
-Espace élève du jour 2 : "mes cours", "mes notes", "mon dossier". Chaque
-vue est scopée sur g.utilisateur_courant.eleve_id — jamais sur un id pris
-dans l'URL ou le payload — pour qu'un élève ne puisse structurellement pas
-lire les données d'un autre en changeant un paramètre.
+Espace élève : "mes cours", "mes notes", "mon dossier" (jour 2), puis "mes
+compétences" et "mes tournois" (jour 3). Chaque vue est scopée sur
+g.utilisateur_courant.eleve_id — jamais sur un id pris dans l'URL ou le
+payload — pour qu'un élève ne puisse structurellement pas lire les
+données d'un autre en changeant un paramètre.
 """
 
 from flask import Blueprint, g, jsonify
+from sqlalchemy import or_
+from sqlalchemy.orm import joinedload
 
 from app.auth import role_requis
 from app.extensions import db
-from app.models import Cours, Eleve, Inscription, Resultat
+from app.models import Cours, Duel, Eleve, Inscription, Maitrise, Resultat
 from app.models.enums import RoleUtilisateur
 
 espace_eleve_bp = Blueprint("espace_eleve", __name__, url_prefix="/moi")
@@ -81,3 +84,76 @@ def mon_dossier():
         ),
         200,
     )
+
+
+@espace_eleve_bp.get("/competences")
+@role_requis(RoleUtilisateur.ELEVE)
+def mes_competences():
+    """Compétences débloquées par l'élève courant (jour 3)."""
+    maitrises = (
+        db.session.query(Maitrise)
+        .filter_by(eleve_id=g.utilisateur_courant.eleve_id)
+        .options(joinedload(Maitrise.competence))
+        .all()
+    )
+    return (
+        jsonify(
+            [
+                {
+                    "competence_id": m.competence_id,
+                    "nom": m.competence.nom,
+                    "categorie": m.competence.categorie,
+                    "date_obtention": m.date_obtention.isoformat(),
+                    "source": m.source.value,
+                }
+                for m in maitrises
+            ]
+        ),
+        200,
+    )
+
+
+@espace_eleve_bp.get("/tournois")
+@role_requis(RoleUtilisateur.ELEVE)
+def mes_tournois():
+    """Historique des duels de l'élève courant, avec le résultat de chacun
+    (gagné/perdu) et le tournoi concerné (jour 3).
+
+    joinedload sur tournoi + les deux adversaires : cette vue boucle sur
+    une liste de duels pour en tirer nom du tournoi et de l'adversaire,
+    exactement le genre d'accès qui tournerait en N+1 sans ça (voir
+    PERFORMANCE.md).
+    """
+    eleve_id = g.utilisateur_courant.eleve_id
+    duels = (
+        db.session.query(Duel)
+        .filter(or_(Duel.eleve_1_id == eleve_id, Duel.eleve_2_id == eleve_id))
+        .options(
+            joinedload(Duel.tournoi),
+            joinedload(Duel.eleve_1),
+            joinedload(Duel.eleve_2),
+        )
+        .all()
+    )
+
+    resultat = []
+    for duel in duels:
+        adversaire = duel.eleve_2 if duel.eleve_1_id == eleve_id else duel.eleve_1
+        if duel.vainqueur_id is None:
+            issue = "en_attente"
+        elif duel.vainqueur_id == eleve_id:
+            issue = "gagne"
+        else:
+            issue = "perdu"
+
+        resultat.append(
+            {
+                "duel_id": duel.id,
+                "tournoi_id": duel.tournoi_id,
+                "tournoi_nom": duel.tournoi.nom,
+                "adversaire": {"id": adversaire.id, "nom": adversaire.nom},
+                "issue": issue,
+            }
+        )
+
+    return jsonify(resultat), 200
