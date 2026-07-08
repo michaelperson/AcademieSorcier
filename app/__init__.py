@@ -29,6 +29,12 @@ def create_app(config_name=None):
     # d'un module à l'autre ne se résoudraient pas.
     from app import models  # noqa: F401
 
+    from app.error_handlers import enregistrer_gestionnaires_erreurs
+    from app.logging_config import configurer_logging
+
+    configurer_logging(app)
+    enregistrer_gestionnaires_erreurs(app)
+
     register_blueprints(app)
 
     return app

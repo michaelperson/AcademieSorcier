@@ -25,18 +25,32 @@ Espace élève (`app/routes/espace_eleve.py`) : `GET /moi/cours`, `GET /moi/note
 
 Chasse au N+1 : mesure réelle (pas théorique) des requêtes SQL sur `GET /cours/<id>/eleves`, correctif par `joinedload()` rendu optionnel via `?eager=true`, avant/après documenté dans `PERFORMANCE.md`.
 
-67 tests passent (`pytest`), dont les tests métier attendus par le cahier des charges : refus d'inscription sur cours complet, décision réussi/échec à la clôture d'un examen, et mise à jour de l'inscription à la clôture d'un cours.
+Gestion d'erreurs centralisée et logging (`app/error_handlers.py`, `app/logging_config.py`) : ajoutés hors cahier des charges, à la suite d'un bug réel rencontré en cours de route (une base non initialisée renvoyait une page HTML de débogage au lieu d'une erreur JSON). Détail plus bas dans cette section.
+
+72 tests passent (`pytest`), dont les tests métier attendus par le cahier des charges : refus d'inscription sur cours complet, décision réussi/échec à la clôture d'un examen, et mise à jour de l'inscription à la clôture d'un cours.
 
 Reste à faire : jour 3 — compétences, maîtrise, tournoi, duel. Voir "Où continuer" plus bas.
+
+### Gestion d'erreurs et logging
+
+Deux fichiers, deux responsabilités séparées :
+
+`app/error_handlers.py` centralise la conversion des exceptions en réponses JSON, avec `app.errorhandler(...)` — l'équivalent Flask d'un middleware d'exception (Flask n'a pas de chaîne de middlewares au sens Express ou Django). Trois niveaux, du plus spécifique au plus général : les `HTTPException` de Flask/Werkzeug (route inconnue, méthode non supportée — auparavant renvoyées en HTML, incohérent avec le reste de l'API), les `SQLAlchemyError` (avec `db.session.rollback()`, indispensable pour ne pas laisser la session dans un état invalide pour la requête suivante), et enfin `Exception` en filet de sécurité pour tout le reste. Ce mécanisme ne remplace pas les validations déjà faites route par route (champ manquant, cours complet...) : il couvre ce qu'aucune route ne peut anticiper.
+
+`app/logging_config.py` configure le logger applicatif (niveau piloté par `LOG_LEVEL`, sortie console toujours, fichier tournant optionnel dans `logs/` via `LOG_TO_FILE=True`) et un journal d'accès séparé (une ligne par requête : méthode, chemin, code retour, durée), via les hooks `before_request`/`after_request`.
+
+Pourquoi ajouter ça maintenant, hors planning : en testant l'API sans avoir lancé `seed.py`, une requête sur un endpoint de listing plantait avec une trace SQLAlchemy brute et la page de débogage interactive de Werkzeug (avec son PIN de déverrouillage) au lieu d'une erreur exploitable. Symptomatique d'un problème plus général : sans gestion centralisée, chaque route qui pourrait un jour lever une exception imprévue devrait la gérer elle-même, ou la laisser fuiter telle quelle. Le correctif ponctuel (lancer le seed) ne change rien à ce problème de fond.
 
 ## Structure
 
 ```
 .
 ├── app/
-│   ├── __init__.py       # create_app() : app factory, enregistre modèles et blueprints
+│   ├── __init__.py       # create_app() : app factory, enregistre modèles, logging, erreurs, blueprints
 │   ├── extensions.py     # instance unique de SQLAlchemy (db)
 │   ├── auth.py           # lecture X-User-Id, décorateurs connexion_requise / role_requis
+│   ├── error_handlers.py # gestion centralisée des exceptions (HTTPException, SQLAlchemyError, Exception)
+│   ├── logging_config.py # logger applicatif + journal d'accès (before_request/after_request)
 │   ├── openapi_spec.py   # spec OpenAPI écrite à la main (dict Python)
 │   ├── models/
 │   │   ├── __init__.py       # agrège les imports, nécessaire à db.create_all()
@@ -78,11 +92,13 @@ Reste à faire : jour 3 — compétences, maîtrise, tournoi, duel. Voir "Où co
 │   ├── test_inscriptions.py
 │   ├── test_examens.py
 │   ├── test_espace_eleve.py
-│   └── test_resultats.py
-├── config.py             # Config (dev) / TestingConfig
+│   ├── test_resultats.py
+│   └── test_error_handlers.py
+├── config.py             # Config (dev) / TestingConfig, dont LOG_LEVEL / LOG_TO_FILE
 ├── run.py                # lance le serveur de développement
 ├── seed.py               # peuple la base (4 maisons, 30 élèves, 5 professeurs, 5 cours, comptes)
 ├── PERFORMANCE.md        # chasse au N+1 : méthode de mesure, résultats, correctif
+├── logs/                 # créé si LOG_TO_FILE=True (ignoré par git)
 ├── requirements.txt
 └── .env.example
 ```
@@ -128,6 +144,8 @@ pytest
 
 L'environnement virtuel (`.venv/`) n'est pas versionné (voir `.gitignore`) : chaque personne de l'équipe le recrée localement à partir de `requirements.txt`.
 
+Important sur `DATABASE_URL` dans `.env` : laissez la ligne commentée par défaut. `config.py` utilise alors un chemin absolu (`<racine du projet>/academie.db`). Si vous la décommentez avec un chemin relatif comme `sqlite:///academie.db`, Flask-SQLAlchemy le résout par rapport au dossier `instance/` de Flask, pas à la racine du projet — vous auriez alors deux fichiers `.db` différents selon que la variable est définie ou non, avec `seed.py` qui peuple l'un et le serveur qui lit l'autre (symptôme : `OperationalError: no such table`, alors que le seed s'est pourtant bien déroulé).
+
 ### Essayer rapidement
 
 ```bash
@@ -157,6 +175,10 @@ curl -X POST http://127.0.0.1:5000/examens/1/cloture
 # Clôture de cours : rapport sur toute la classe, puis décision pour un élève
 curl -X POST http://127.0.0.1:5000/cours/1/cloture
 curl -X POST "http://127.0.0.1:5000/cours/1/cloture?eleve_id=1"
+
+# Gestion d'erreurs centralisée : réponse JSON, pas une page HTML
+curl http://127.0.0.1:5000/route-qui-nexiste-pas
+curl -X DELETE http://127.0.0.1:5000/health
 ```
 
 Tous les comptes créés par `seed.py` utilisent le mot de passe `motdepasse123` (élèves et professeurs) ou `admin123` (le compte admin), sur le modèle `prenom.nom@academie-sorcellerie.fr`.

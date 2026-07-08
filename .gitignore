@@ -13,5 +13,6 @@ instance/
 *.sqlite
 *.sqlite3
 
+logs/
+
 .vscode/
-.idea/
