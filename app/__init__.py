@@ -39,9 +39,13 @@ def register_blueprints(app):
     from app.routes.cours import cours_bp
     from app.routes.docs import docs_bp
     from app.routes.eleves import eleves_bp
+    from app.routes.espace_eleve import espace_eleve_bp
+    from app.routes.examens import examens_bp
     from app.routes.health import health_bp
+    from app.routes.inscriptions import inscriptions_bp
     from app.routes.maisons import maisons_bp
     from app.routes.professeurs import professeurs_bp
+    from app.routes.resultats import resultats_bp
 
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp)
@@ -50,3 +54,7 @@ def register_blueprints(app):
     app.register_blueprint(professeurs_bp)
     app.register_blueprint(cours_bp)
     app.register_blueprint(eleves_bp)
+    app.register_blueprint(inscriptions_bp)
+    app.register_blueprint(examens_bp)
+    app.register_blueprint(resultats_bp)
+    app.register_blueprint(espace_eleve_bp)
