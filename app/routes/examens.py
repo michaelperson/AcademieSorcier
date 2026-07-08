@@ -1,10 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from flask import Blueprint, jsonify, request
 
 from app.extensions import db
-from app.models import Cours, Examen, Inscription, Resultat
-from app.models.enums import StatutInscription, StatutResultat
+from app.models import Competence, Cours, Examen, Inscription, Maitrise, Resultat
+from app.models.enums import SourceDeblocage, StatutInscription, StatutResultat
 from app.routes.inscriptions import STATUTS_OCCUPANT_UNE_PLACE
 
 examens_bp = Blueprint("examens", __name__)
@@ -306,6 +306,93 @@ def cloturer_examen(examen_id):
                     {"eleve_id": r.eleve_id, "note": r.note, "statut": r.statut.value}
                     for r in resultats_examen
                 ],
+            }
+        ),
+        200,
+    )
+
+
+@examens_bp.post("/examens/<int:examen_id>/evaluer-competences")
+def evaluer_competences(examen_id):
+    """Endpoint métier du jour 3 : après la clôture d'un examen, débloque
+    automatiquement les compétences dont la condition est liée à CET
+    examen, pour chaque élève dont la note atteint le seuil requis par la
+    compétence (Competence.note_min — pas forcément le même seuil que
+    Examen.seuil_reussite : une compétence peut exiger mieux que la simple
+    moyenne).
+
+    Exige que l'examen ait déjà été clôturé (chaque résultat a un statut) :
+    évaluer des compétences sur des résultats pas encore validés reviendrait
+    à débloquer quelque chose sur une note qui pourrait encore changer.
+
+    Idempotent par construction : la contrainte unique (eleve_id,
+    competence_id) sur Maitrise empêche toute création en double, donc
+    relancer cet endpoint après un premier passage ne fait que déplacer les
+    élèves déjà débloqués de "maitrises_creees" à "deja_debloquees", sans
+    jamais dupliquer une ligne.
+    """
+    examen = db.session.get(Examen, examen_id)
+    if examen is None:
+        return jsonify({"erreur": f"Examen {examen_id} introuvable."}), 404
+
+    resultats = db.session.query(Resultat).filter_by(examen_id=examen_id).all()
+    if not resultats:
+        return jsonify({"erreur": "Aucun résultat saisi pour cet examen."}), 400
+    if any(r.statut is None for r in resultats):
+        return (
+            jsonify(
+                {
+                    "erreur": (
+                        "Cet examen doit d'abord être clôturé "
+                        "(POST /examens/<id>/cloture) avant d'évaluer les compétences."
+                    )
+                }
+            ),
+            400,
+        )
+
+    competences = (
+        db.session.query(Competence)
+        .filter_by(condition_type=SourceDeblocage.EXAMEN, examen_id=examen_id)
+        .all()
+    )
+
+    maitrises_creees = []
+    deja_debloquees = []
+    for competence in competences:
+        for resultat in resultats:
+            if resultat.note < competence.note_min:
+                continue
+
+            existante = (
+                db.session.query(Maitrise)
+                .filter_by(eleve_id=resultat.eleve_id, competence_id=competence.id)
+                .one_or_none()
+            )
+            entree = {"eleve_id": resultat.eleve_id, "competence": competence.nom}
+            if existante is None:
+                db.session.add(
+                    Maitrise(
+                        eleve_id=resultat.eleve_id,
+                        competence_id=competence.id,
+                        date_obtention=date.today(),
+                        source=SourceDeblocage.EXAMEN,
+                        source_examen_id=examen_id,
+                    )
+                )
+                maitrises_creees.append(entree)
+            else:
+                deja_debloquees.append(entree)
+
+    db.session.commit()
+
+    return (
+        jsonify(
+            {
+                "examen_id": examen_id,
+                "competences_evaluees": [c.nom for c in competences],
+                "maitrises_creees": maitrises_creees,
+                "deja_debloquees": deja_debloquees,
             }
         ),
         200,

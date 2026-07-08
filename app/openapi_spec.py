@@ -355,6 +355,163 @@ MON_DOSSIER_SCHEMA = {
     },
 }
 
+# --- Jour 3 --------------------------------------------------------------
+
+COMPETENCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "readOnly": True},
+        "nom": {"type": "string", "example": "Sort de Stupéfixion"},
+        "categorie": {"type": "string", "example": "Sorts offensifs"},
+        "description": {"type": "string", "example": "Immobilise un adversaire à distance."},
+        "condition_type": {"type": "string", "enum": ["examen", "tournoi"]},
+        "examen_id": {
+            "type": "integer",
+            "nullable": True,
+            "description": "Rempli seulement si condition_type == 'examen'.",
+        },
+        "note_min": {
+            "type": "number",
+            "nullable": True,
+            "description": "Note minimale à cet examen pour débloquer la compétence.",
+        },
+    },
+}
+
+COMPETENCE_ECRITURE_SCHEMA = {
+    "type": "object",
+    "description": (
+        "Si condition_type == 'examen', examen_id et note_min sont obligatoires. "
+        "Si condition_type == 'tournoi', ils sont ignorés (forcés à null)."
+    ),
+    "properties": {
+        "nom": {"type": "string", "example": "Sort de Stupéfixion"},
+        "categorie": {"type": "string", "example": "Sorts offensifs"},
+        "description": {"type": "string"},
+        "condition_type": {"type": "string", "enum": ["examen", "tournoi"]},
+        "examen_id": {"type": "integer", "example": 1},
+        "note_min": {"type": "number", "example": 12},
+    },
+    "required": ["nom", "categorie", "description", "condition_type"],
+}
+
+COMPETENCES_PAGE_SCHEMA = {
+    "type": "object",
+    "description": "Enveloppe de pagination commune aux listings du jour 3.",
+    "properties": {
+        "elements": {"type": "array", "items": {"$ref": "#/components/schemas/Competence"}},
+        "page": {"type": "integer"},
+        "par_page": {"type": "integer"},
+        "total": {"type": "integer"},
+        "pages": {"type": "integer"},
+    },
+}
+
+TOURNOI_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "readOnly": True},
+        "nom": {"type": "string", "example": "Tournoi de printemps"},
+        "annee": {"type": "integer", "example": 2026},
+        "maison_organisatrice_id": {"type": "integer", "nullable": True},
+        "vainqueur_eleve_id": {"type": "integer", "nullable": True, "readOnly": True},
+        "cloture_le": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": True,
+            "readOnly": True,
+            "description": "null tant que le tournoi n'est pas clôturé ; sert de garde anti-rejeu.",
+        },
+    },
+}
+
+TOURNOI_ECRITURE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "nom": {"type": "string", "example": "Tournoi de printemps"},
+        "annee": {"type": "integer", "example": 2026},
+        "maison_organisatrice_id": {"type": "integer", "example": 1},
+    },
+    "required": ["nom", "annee"],
+}
+
+TOURNOIS_PAGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "elements": {"type": "array", "items": {"$ref": "#/components/schemas/Tournoi"}},
+        "page": {"type": "integer"},
+        "par_page": {"type": "integer"},
+        "total": {"type": "integer"},
+        "pages": {"type": "integer"},
+    },
+}
+
+DUEL_ECRITURE_SCHEMA = {
+    "type": "object",
+    "description": "Enregistre un duel déjà joué, vainqueur inclus — pas une programmation de duel à venir.",
+    "properties": {
+        "eleve_1_id": {"type": "integer", "example": 1},
+        "eleve_2_id": {"type": "integer", "example": 2},
+        "vainqueur_id": {"type": "integer", "example": 1, "description": "Doit être eleve_1_id ou eleve_2_id."},
+    },
+    "required": ["eleve_1_id", "eleve_2_id", "vainqueur_id"],
+}
+
+DUEL_DETAILLE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer"},
+        "eleve_1": {
+            "type": "object",
+            "properties": {"id": {"type": "integer"}, "nom": {"type": "string"}},
+        },
+        "eleve_2": {
+            "type": "object",
+            "properties": {"id": {"type": "integer"}, "nom": {"type": "string"}},
+        },
+        "vainqueur": {
+            "type": "object",
+            "nullable": True,
+            "properties": {"id": {"type": "integer"}, "nom": {"type": "string"}},
+        },
+    },
+}
+
+CLOTURE_TOURNOI_REPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "tournoi_id": {"type": "integer"},
+        "vainqueur_eleve_id": {"type": "integer"},
+        "victoires": {"type": "integer"},
+        "competences_debloquees": {"type": "array", "items": {"type": "string"}},
+        "maison_id": {"type": "integer"},
+        "reputation_ajoutee": {"type": "integer"},
+        "nouvelle_reputation": {"type": "integer"},
+    },
+}
+
+EVALUER_COMPETENCES_REPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "examen_id": {"type": "integer"},
+        "competences_evaluees": {"type": "array", "items": {"type": "string"}},
+        "maitrises_creees": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"eleve_id": {"type": "integer"}, "competence": {"type": "string"}},
+            },
+        },
+        "deja_debloquees": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"eleve_id": {"type": "integer"}, "competence": {"type": "string"}},
+            },
+        },
+    },
+}
+
 
 def _reponse_erreur(description):
     return {
@@ -686,6 +843,32 @@ PATHS = {
             },
         },
     },
+    "/examens/{id}/evaluer-competences": {
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "post": {
+            "tags": ["Compétences"],
+            "summary": "Débloquer les compétences liées à cet examen (jour 3)",
+            "description": (
+                "Pour chaque élève dont la note à cet examen atteint le note_min d'une "
+                "compétence à condition 'examen' liée à cet examen, crée la Maitrise "
+                "correspondante si elle n'existe pas déjà. Exige que l'examen ait déjà "
+                "été clôturé (POST /examens/{id}/cloture). Idempotent : la contrainte "
+                "unique (eleve_id, competence_id) sur Maitrise empêche tout doublon."
+            ),
+            "responses": {
+                "200": {
+                    "description": "Évaluation effectuée (éventuellement sans nouvelle Maitrise).",
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/EvaluerCompetencesReponse"}
+                        }
+                    },
+                },
+                "400": _reponse_erreur("Aucun résultat, ou examen pas encore clôturé."),
+                "404": _reponse_erreur("Examen introuvable."),
+            },
+        },
+    },
     "/cours/{id}/cloture": {
         "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
         "post": {
@@ -762,6 +945,63 @@ PATHS = {
             },
         },
     },
+    "/tournois/{id}/duels": {
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "get": {
+            "tags": ["Tournois"],
+            "summary": "Lister les duels d'un tournoi",
+            "responses": {
+                "200": {
+                    "description": "Liste des duels, avec les noms des participants.",
+                    "content": {
+                        "application/json": {
+                            "schema": {"type": "array", "items": {"$ref": "#/components/schemas/DuelDetaille"}}
+                        }
+                    },
+                },
+                "404": _reponse_erreur("Tournoi introuvable."),
+            },
+        },
+        "post": {
+            "tags": ["Tournois"],
+            "summary": "Enregistrer un duel déjà joué",
+            "description": "Refusé si le tournoi est déjà clôturé, ou si vainqueur_id n'est pas l'un des deux participants.",
+            "requestBody": {
+                "required": True,
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DuelEcriture"}}},
+            },
+            "responses": {
+                "201": {"description": "Duel enregistré."},
+                "400": _reponse_erreur("Payload invalide, ou tournoi déjà clôturé."),
+                "404": _reponse_erreur("Tournoi introuvable."),
+            },
+        },
+    },
+    "/tournois/{id}/cloture": {
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "post": {
+            "tags": ["Tournois"],
+            "summary": "Clôturer un tournoi (vainqueur, compétences, réputation)",
+            "description": (
+                "Désigne le vainqueur (le plus de victoires en duel), débloque les "
+                "compétences à condition 'tournoi' pour ce vainqueur, et ajoute des "
+                "points de réputation à sa maison. Refusé si déjà clôturé (garde "
+                "anti-rejeu), si aucun duel n'est enregistré, ou en cas d'égalité "
+                "stricte entre plusieurs élèves — un départage automatique serait "
+                "arbitraire sur une décision qui affecte la réputation d'une maison."
+            ),
+            "responses": {
+                "200": {
+                    "description": "Clôture effectuée.",
+                    "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/ClotureTournoiReponse"}}
+                    },
+                },
+                "400": _reponse_erreur("Déjà clôturé, aucun duel, ou égalité entre plusieurs élèves."),
+                "404": _reponse_erreur("Tournoi introuvable."),
+            },
+        },
+    },
     "/moi/cours": {
         "get": {
             "tags": ["Espace élève"],
@@ -801,6 +1041,30 @@ PATHS = {
             },
         }
     },
+    "/moi/competences": {
+        "get": {
+            "tags": ["Espace élève"],
+            "summary": "Mes compétences débloquées",
+            "security": [{"XUserId": []}],
+            "responses": {
+                "200": {"description": "Compétences débloquées par l'élève courant."},
+                "401": _reponse_erreur("Header X-User-Id manquant ou invalide."),
+                "403": _reponse_erreur("L'utilisateur résolu n'a pas le rôle élève."),
+            },
+        }
+    },
+    "/moi/tournois": {
+        "get": {
+            "tags": ["Espace élève"],
+            "summary": "Mon historique de tournois et de duels",
+            "security": [{"XUserId": []}],
+            "responses": {
+                "200": {"description": "Duels de l'élève courant, avec l'issue de chacun."},
+                "401": _reponse_erreur("Header X-User-Id manquant ou invalide."),
+                "403": _reponse_erreur("L'utilisateur résolu n'a pas le rôle élève."),
+            },
+        }
+    },
 }
 
 PATHS.update(_crud_paths("maisons", "Maisons", MAISON_SCHEMA, MAISON_ECRITURE_SCHEMA))
@@ -808,17 +1072,154 @@ PATHS.update(_crud_paths("professeurs", "Professeurs", PROFESSEUR_SCHEMA, PROFES
 PATHS.update(_crud_paths("cours", "Cours", COURS_SCHEMA, COURS_ECRITURE_SCHEMA))
 PATHS.update(_crud_paths("eleves", "Eleves", ELEVE_SCHEMA, ELEVE_ECRITURE_SCHEMA))
 
+# Compétences et tournois n'utilisent pas _crud_paths : lecture ouverte à
+# tous mais écriture réservée à l'admin (voir app/routes/competences.py et
+# app/routes/tournois.py), alors que _crud_paths documente un CRUD
+# symétrique et ouvert comme au jour 1. Décrits à la main pour refléter
+# cette dissymétrie (et, pour Tournoi, l'absence de PUT/DELETE — un
+# tournoi se clôture, il ne se réécrit pas).
+PATHS["/competences"] = {
+    "get": {
+        "tags": ["Compétences"],
+        "summary": "Lister le catalogue de compétences",
+        "description": "Filtrable par ?categorie=..., paginé (?page=&par_page=).",
+        "parameters": [
+            {"name": "categorie", "in": "query", "schema": {"type": "string"}},
+            {"name": "page", "in": "query", "schema": {"type": "integer", "default": 1}},
+            {"name": "par_page", "in": "query", "schema": {"type": "integer", "default": 20}},
+        ],
+        "responses": {
+            "200": {
+                "description": "Page de compétences.",
+                "content": {
+                    "application/json": {"schema": {"$ref": "#/components/schemas/CompetencesPage"}}
+                },
+            }
+        },
+    },
+    "post": {
+        "tags": ["Compétences"],
+        "summary": "Ajouter une compétence au catalogue (admin)",
+        "security": [{"XUserId": []}],
+        "requestBody": {
+            "required": True,
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CompetenceEcriture"}}},
+        },
+        "responses": {
+            "201": {
+                "description": "Compétence créée.",
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Competence"}}},
+            },
+            "400": _reponse_erreur("Payload invalide (condition_type incohérent avec examen_id/note_min)."),
+            "401": _reponse_erreur("Header X-User-Id manquant ou invalide."),
+            "403": _reponse_erreur("Réservé à l'admin."),
+        },
+    },
+}
+PATHS["/competences/{id}"] = {
+    "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+    "get": {
+        "tags": ["Compétences"],
+        "summary": "Obtenir une compétence",
+        "responses": {
+            "200": {
+                "description": "Compétence trouvée.",
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Competence"}}},
+            },
+            "404": _reponse_erreur("Compétence introuvable."),
+        },
+    },
+    "put": {
+        "tags": ["Compétences"],
+        "summary": "Modifier une compétence (admin)",
+        "security": [{"XUserId": []}],
+        "requestBody": {
+            "required": True,
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CompetenceEcriture"}}},
+        },
+        "responses": {
+            "200": {
+                "description": "Compétence modifiée.",
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Competence"}}},
+            },
+            "400": _reponse_erreur("Payload invalide."),
+            "403": _reponse_erreur("Réservé à l'admin."),
+            "404": _reponse_erreur("Compétence introuvable."),
+        },
+    },
+    "delete": {
+        "tags": ["Compétences"],
+        "summary": "Supprimer une compétence (admin)",
+        "security": [{"XUserId": []}],
+        "responses": {
+            "200": {"description": "Compétence supprimée."},
+            "403": _reponse_erreur("Réservé à l'admin."),
+            "404": _reponse_erreur("Compétence introuvable."),
+        },
+    },
+}
+PATHS["/tournois"] = {
+    "get": {
+        "tags": ["Tournois"],
+        "summary": "Lister les tournois",
+        "description": "Filtrable par ?annee=..., paginé (?page=&par_page=).",
+        "parameters": [
+            {"name": "annee", "in": "query", "schema": {"type": "integer"}},
+            {"name": "page", "in": "query", "schema": {"type": "integer", "default": 1}},
+            {"name": "par_page", "in": "query", "schema": {"type": "integer", "default": 20}},
+        ],
+        "responses": {
+            "200": {
+                "description": "Page de tournois.",
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TournoisPage"}}},
+            }
+        },
+    },
+    "post": {
+        "tags": ["Tournois"],
+        "summary": "Créer un tournoi (admin)",
+        "security": [{"XUserId": []}],
+        "requestBody": {
+            "required": True,
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TournoiEcriture"}}},
+        },
+        "responses": {
+            "201": {
+                "description": "Tournoi créé.",
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Tournoi"}}},
+            },
+            "400": _reponse_erreur("Payload invalide."),
+            "403": _reponse_erreur("Réservé à l'admin."),
+        },
+    },
+}
+PATHS["/tournois/{id}"] = {
+    "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+    "get": {
+        "tags": ["Tournois"],
+        "summary": "Obtenir un tournoi",
+        "responses": {
+            "200": {
+                "description": "Tournoi trouvé.",
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Tournoi"}}},
+            },
+            "404": _reponse_erreur("Tournoi introuvable."),
+        },
+    },
+}
+
 
 OPENAPI_SPEC = {
     "openapi": "3.1.0",
     "info": {
         "title": "Académie de Sorcellerie — API",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "description": (
             "API pédagogique du cahier des charges \"Académie de Sorcellerie\". "
-            "Jour 1 (modèles, CRUD, connexion simulée) et jour 2 (inscriptions, "
-            "examens, résultats, clôture d'examen et clôture de cours) livrés. "
-            "Jour 3 (compétences, tournois) à venir."
+            "Jour 1 (modèles, CRUD, connexion simulée), jour 2 (inscriptions, "
+            "examens, résultats, clôture d'examen et clôture de cours) et jour 3 "
+            "(compétences, maîtrises, tournois, duels) livrés. Jour 4 (passage de "
+            "fin d'année, validation stricte) à venir."
         ),
     },
     "servers": [{"url": "/", "description": "Serveur de développement local"}],
@@ -832,6 +1233,8 @@ OPENAPI_SPEC = {
         {"name": "Inscriptions"},
         {"name": "Examens"},
         {"name": "Résultats"},
+        {"name": "Compétences", "description": "Catalogue et déblocage automatique (jour 3)."},
+        {"name": "Tournois", "description": "Tournois, duels et clôture (jour 3)."},
         {"name": "Espace élève", "description": "Endpoints scopés sur l'élève résolu via X-User-Id."},
     ],
     "paths": PATHS,
@@ -860,6 +1263,16 @@ OPENAPI_SPEC = {
             "ClotureCoursDecision": CLOTURE_COURS_DECISION_SCHEMA,
             "MoyenneCours": MOYENNE_COURS_SCHEMA,
             "MonDossier": MON_DOSSIER_SCHEMA,
+            "Competence": COMPETENCE_SCHEMA,
+            "CompetenceEcriture": COMPETENCE_ECRITURE_SCHEMA,
+            "CompetencesPage": COMPETENCES_PAGE_SCHEMA,
+            "Tournoi": TOURNOI_SCHEMA,
+            "TournoiEcriture": TOURNOI_ECRITURE_SCHEMA,
+            "TournoisPage": TOURNOIS_PAGE_SCHEMA,
+            "DuelEcriture": DUEL_ECRITURE_SCHEMA,
+            "DuelDetaille": DUEL_DETAILLE_SCHEMA,
+            "ClotureTournoiReponse": CLOTURE_TOURNOI_REPONSE_SCHEMA,
+            "EvaluerCompetencesReponse": EVALUER_COMPETENCES_REPONSE_SCHEMA,
         },
         "securitySchemes": {
             "XUserId": {
