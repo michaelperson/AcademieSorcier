@@ -8,17 +8,21 @@ exécution. Relancer ce script dix fois de suite doit toujours laisser
 exactement 4 maisons, pas 40.
 """
 
+from datetime import date
+
 from app import create_app
 from app.extensions import db
 from app.models import (
     AnneeAcademique,
+    Competence,
     Cours,
     Eleve,
+    Examen,
     Maison,
     Professeur,
     Utilisateur,
 )
-from app.models.enums import RoleUtilisateur, StatutEleve
+from app.models.enums import RoleUtilisateur, SourceDeblocage, StatutEleve
 
 app = create_app()
 
@@ -122,6 +126,172 @@ ELEVES = [
 
 FAMILIERS = ["Chat", "Hibou", "Crapaud", "Rat", "Faucon", None]
 
+# Un examen "de référence" par cours, seulement pour donner aux compétences
+# à condition "examen" (ci-dessous) quelque chose de réel à référencer.
+# Le jeu d'inscriptions/résultats qui donnerait un sens pédagogique complet
+# à ces examens reste construit à la volée par les tests et par l'usage
+# manuel de l'API (voir jour 2) — ce n'est pas le rôle du seed jour 1/3.
+EXAMENS = [
+    {
+        "cours": "Potions avancées",
+        "titre": "Examen final de potions",
+        "date": date(2026, 5, 15),
+        "seuil_reussite": 10.0,
+    },
+    {
+        "cours": "Défense élémentaire",
+        "titre": "Examen final de défense élémentaire",
+        "date": date(2026, 5, 16),
+        "seuil_reussite": 10.0,
+    },
+    {
+        "cours": "Métamorphose intermédiaire",
+        "titre": "Examen final de métamorphose",
+        "date": date(2026, 5, 17),
+        "seuil_reussite": 10.0,
+    },
+    {
+        "cours": "Divination des augures",
+        "titre": "Examen final de divination",
+        "date": date(2026, 5, 18),
+        "seuil_reussite": 10.0,
+    },
+    {
+        "cours": "Sortilèges de combat",
+        "titre": "Examen final de sortilèges offensifs",
+        "date": date(2026, 5, 19),
+        "seuil_reussite": 10.0,
+    },
+]
+
+# 18 compétences (le cahier des charges en demande 15 à 20) : 14 à
+# condition "examen" (2-3 par examen ci-dessus, avec des note_min
+# variées pour représenter des niveaux de maîtrise différents) et 4 à
+# condition "tournoi" (débloquées au vainqueur d'un tournoi, quel qu'il
+# soit — voir POST /tournois/<id>/cloture).
+COMPETENCES = [
+    # Potions
+    {
+        "nom": "Dosage de précision",
+        "categorie": "Potions",
+        "description": "Prépare une potion sans dévier d'un gramme sur les proportions.",
+        "condition": ("examen", "Examen final de potions", 10),
+    },
+    {
+        "nom": "Philtre de Félicité",
+        "categorie": "Potions",
+        "description": "Maîtrise la préparation du philtre de bonheur temporaire.",
+        "condition": ("examen", "Examen final de potions", 14),
+    },
+    {
+        "nom": "Élixir de Polynectar simplifié",
+        "categorie": "Potions",
+        "description": "Version allégée du Polynectar, réservée aux meilleurs élèves.",
+        "condition": ("examen", "Examen final de potions", 17),
+    },
+    # Sorts défensifs
+    {
+        "nom": "Bouclier de Protego",
+        "categorie": "Sorts défensifs",
+        "description": "Lève un bouclier magique capable d'absorber un sort simple.",
+        "condition": ("examen", "Examen final de défense élémentaire", 10),
+    },
+    {
+        "nom": "Contre-sort réflexe",
+        "categorie": "Sorts défensifs",
+        "description": "Renvoie un sort adverse sans temps de préparation.",
+        "condition": ("examen", "Examen final de défense élémentaire", 13),
+    },
+    {
+        "nom": "Barrière de Fumée Runique",
+        "categorie": "Sorts défensifs",
+        "description": "Dissimule sa position derrière un écran runique temporaire.",
+        "condition": ("examen", "Examen final de défense élémentaire", 16),
+    },
+    # Métamorphose
+    {
+        "nom": "Transfiguration d'objet simple",
+        "categorie": "Métamorphose",
+        "description": "Transforme un petit objet inanimé en un autre.",
+        "condition": ("examen", "Examen final de métamorphose", 10),
+    },
+    {
+        "nom": "Métamorphose animale partielle",
+        "categorie": "Métamorphose",
+        "description": "Modifie une partie de son corps en trait animal, temporairement.",
+        "condition": ("examen", "Examen final de métamorphose", 14),
+    },
+    {
+        "nom": "Animagus en formation",
+        "categorie": "Métamorphose",
+        "description": "Entame la transformation complète en forme animale.",
+        "condition": ("examen", "Examen final de métamorphose", 18),
+    },
+    # Divination
+    {
+        "nom": "Lecture des feuilles de thé",
+        "categorie": "Divination",
+        "description": "Interprète les formes laissées par les feuilles de thé.",
+        "condition": ("examen", "Examen final de divination", 10),
+    },
+    {
+        "nom": "Boule de cristal, premiers signes",
+        "categorie": "Divination",
+        "description": "Distingue les premières images significatives dans une boule de cristal.",
+        "condition": ("examen", "Examen final de divination", 13),
+    },
+    {
+        "nom": "Prémonition guidée",
+        "categorie": "Divination",
+        "description": "Provoque volontairement une prémonition de courte portée.",
+        "condition": ("examen", "Examen final de divination", 17),
+    },
+    # Sorts offensifs
+    {
+        "nom": "Sort de Stupéfixion",
+        "categorie": "Sorts offensifs",
+        "description": "Immobilise un adversaire à distance de sécurité.",
+        "condition": ("examen", "Examen final de sortilèges offensifs", 10),
+    },
+    {
+        "nom": "Incantation de la Foudre Runique",
+        "categorie": "Sorts offensifs",
+        "description": "Décharge un trait de foudre canalisé par une rune de combat.",
+        "condition": ("examen", "Examen final de sortilèges offensifs", 14),
+    },
+    {
+        "nom": "Rafale d'Éclats Arcaniques",
+        "categorie": "Sorts offensifs",
+        "description": "Enchaîne plusieurs projectiles magiques en une seule incantation.",
+        "condition": ("examen", "Examen final de sortilèges offensifs", 17),
+    },
+    # Tournoi — débloquées au vainqueur de n'importe quel tournoi clôturé.
+    {
+        "nom": "Titre de Champion du Tournoi",
+        "categorie": "Tournoi",
+        "description": "Reconnaissance officielle accordée au vainqueur d'un tournoi.",
+        "condition": ("tournoi", None, None),
+    },
+    {
+        "nom": "Posture du Duelliste Aguerri",
+        "categorie": "Tournoi",
+        "description": "Maintien et déplacement optimisés pour l'enchaînement de duels.",
+        "condition": ("tournoi", None, None),
+    },
+    {
+        "nom": "Aura de Prestige",
+        "categorie": "Tournoi",
+        "description": "Confiance et prestance reconnues après une victoire marquante.",
+        "condition": ("tournoi", None, None),
+    },
+    {
+        "nom": "Sang-froid du Champion",
+        "categorie": "Tournoi",
+        "description": "Capacité à garder son calme après une série de duels intenses.",
+        "condition": ("tournoi", None, None),
+    },
+]
+
 
 def run():
     with app.app_context():
@@ -151,8 +321,9 @@ def run():
                 defaults={k: v for k, v in data.items() if k != "nom"},
             )
 
+        cours = {}
         for data in COURS:
-            get_or_create(
+            cours[data["intitule"]] = get_or_create(
                 Cours,
                 lookup={"intitule": data["intitule"]},
                 defaults={
@@ -162,6 +333,36 @@ def run():
                     "annee_academique_id": annee.id,
                 },
             )
+
+        examens = {}
+        for data in EXAMENS:
+            examens[data["titre"]] = get_or_create(
+                Examen,
+                lookup={"titre": data["titre"]},
+                defaults={
+                    "date": data["date"],
+                    "seuil_reussite": data["seuil_reussite"],
+                    "cours_id": cours[data["cours"]].id,
+                },
+            )
+
+        for data in COMPETENCES:
+            condition_kind, examen_titre, note_min = data["condition"]
+            if condition_kind == "examen":
+                defaults = {
+                    "categorie": data["categorie"],
+                    "description": data["description"],
+                    "condition_type": SourceDeblocage.EXAMEN,
+                    "examen_id": examens[examen_titre].id,
+                    "note_min": note_min,
+                }
+            else:
+                defaults = {
+                    "categorie": data["categorie"],
+                    "description": data["description"],
+                    "condition_type": SourceDeblocage.TOURNOI,
+                }
+            get_or_create(Competence, lookup={"nom": data["nom"]}, defaults=defaults)
 
         noms_maisons = list(maisons.keys())
         for i, nom_complet in enumerate(ELEVES):
@@ -209,8 +410,8 @@ def run():
 
         print(
             f"Seed terminé : {len(MAISONS)} maisons, {len(PROFESSEURS)} professeurs, "
-            f"{len(COURS)} cours, {len(ELEVES)} élèves, "
-            f"{db.session.query(Utilisateur).count()} utilisateurs."
+            f"{len(COURS)} cours, {len(EXAMENS)} examens, {len(COMPETENCES)} compétences, "
+            f"{len(ELEVES)} élèves, {db.session.query(Utilisateur).count()} utilisateurs."
         )
 
 
