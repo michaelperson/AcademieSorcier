@@ -2,7 +2,7 @@ import pytest
 
 from app import create_app
 from app.extensions import db
-from app.models import AnneeAcademique, Eleve, Maison, Professeur, Utilisateur
+from app.models import AnneeAcademique, Cours, Eleve, Maison, Professeur, Utilisateur
 from app.models.enums import RoleUtilisateur
 
 
@@ -48,8 +48,30 @@ def professeur(app):
 
 
 @pytest.fixture
+def cours(app, professeur, annee_academique):
+    cours = Cours(
+        intitule="Potions avancées",
+        niveau_requis=4,
+        capacite_max=25,
+        professeur_id=professeur.id,
+        annee_academique_id=annee_academique.id,
+    )
+    db.session.add(cours)
+    db.session.commit()
+    return cours
+
+
+@pytest.fixture
 def eleve(app, maison):
     eleve = Eleve(nom="Alaric Corvenoire", annee_etude=3, maison_id=maison.id)
+    db.session.add(eleve)
+    db.session.commit()
+    return eleve
+
+
+@pytest.fixture
+def eleve_2(app, maison):
+    eleve = Eleve(nom="Brielle Ashford", annee_etude=3, maison_id=maison.id)
     db.session.add(eleve)
     db.session.commit()
     return eleve

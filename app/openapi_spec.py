@@ -3,9 +3,7 @@ Spec OpenAPI écrite à la main plutôt que générée à partir des routes : à
 stade du projet (pas encore de marshmallow/pydantic, cf. jour 4), il n'y a
 rien à introspecter automatiquement. Un dict Python reste simple à faire
 évoluer au fil des jours suivants, sans dépendance supplémentaire dans
-requirements.txt. À terme, si vous ajoutez une lib de validation de schéma,
-il est courant qu'elle sache générer cette spec toute seule — mais rien
-n'oblige à migrer.
+requirements.txt.
 
 Servie telle quelle en JSON sur /openapi.json (voir app/routes/docs.py),
 et lue par Scalar sur /docs pour l'interface de documentation interactive.
@@ -136,6 +134,224 @@ IDENTITE_SCHEMA = {
         "role": {"type": "string", "enum": ["eleve", "professeur", "admin"]},
         "eleve_id": {"type": "integer", "nullable": True},
         "professeur_id": {"type": "integer", "nullable": True},
+    },
+}
+
+# --- Jour 2 --------------------------------------------------------------
+
+INSCRIPTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "readOnly": True},
+        "eleve_id": {"type": "integer", "example": 1},
+        "cours_id": {"type": "integer", "example": 1},
+        "date_inscription": {"type": "string", "format": "date"},
+        "statut": {
+            "type": "string",
+            "enum": ["inscrit", "en_cours", "valide", "abandonne"],
+            "example": "inscrit",
+        },
+    },
+}
+
+INSCRIPTION_ECRITURE_SCHEMA = {
+    "type": "object",
+    "properties": {"eleve_id": {"type": "integer", "example": 1}},
+    "required": ["eleve_id"],
+}
+
+ELEVE_DU_COURS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "eleve_id": {"type": "integer"},
+        "nom": {"type": "string", "example": "Alaric Corvenoire"},
+        "maison": {"type": "string", "example": "Pyrraxis"},
+        "statut_inscription": {"type": "string", "enum": ["inscrit", "en_cours", "valide", "abandonne"]},
+    },
+}
+
+EXAMEN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "readOnly": True},
+        "cours_id": {"type": "integer", "example": 1},
+        "titre": {"type": "string", "example": "Interrogation 1"},
+        "date": {"type": "string", "format": "date", "example": "2026-03-01"},
+        "seuil_reussite": {"type": "number", "example": 10},
+    },
+}
+
+EXAMEN_ECRITURE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "titre": {"type": "string", "example": "Interrogation 1"},
+        "date": {"type": "string", "format": "date", "example": "2026-03-01"},
+        "seuil_reussite": {"type": "number", "example": 10},
+    },
+    "required": ["titre", "date", "seuil_reussite"],
+}
+
+RESULTAT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "readOnly": True},
+        "eleve_id": {"type": "integer"},
+        "examen_id": {"type": "integer"},
+        "note": {"type": "number", "minimum": 0, "maximum": 20, "example": 15},
+        "statut": {
+            "type": "string",
+            "enum": ["reussi", "echec"],
+            "nullable": True,
+            "readOnly": True,
+            "description": (
+                "Réussite/échec à CET examen, fixée par POST /examens/{id}/cloture. "
+                "Vaut null tant que l'examen n'a pas été clôturé, et repasse à null si "
+                "la note est réécrite après coup."
+            ),
+        },
+    },
+}
+
+RESULTATS_ECRITURE_SCHEMA = {
+    "type": "object",
+    "description": "Saisie en masse : une entrée par élève, pas un appel par élève.",
+    "properties": {
+        "resultats": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "eleve_id": {"type": "integer", "example": 1},
+                    "note": {"type": "number", "minimum": 0, "maximum": 20, "example": 15},
+                },
+                "required": ["eleve_id", "note"],
+            },
+        }
+    },
+    "required": ["resultats"],
+}
+
+CLOTURE_EXAMEN_REPONSE_SCHEMA = {
+    "type": "object",
+    "description": (
+        "Décision réussi/échec par élève pour CET examen uniquement. Ne touche pas "
+        "au statut de l'inscription au cours — voir ClotureCoursRapport / "
+        "ClotureCoursDecision pour la décision au niveau du cours."
+    ),
+    "properties": {
+        "examen_id": {"type": "integer"},
+        "seuil_reussite": {"type": "number"},
+        "moyenne_examen": {
+            "type": "number",
+            "description": "Moyenne de la classe sur cet examen précis.",
+        },
+        "resultats": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "eleve_id": {"type": "integer"},
+                    "note": {"type": "number"},
+                    "statut": {"type": "string", "enum": ["reussi", "echec"]},
+                },
+            },
+        },
+    },
+}
+
+CLOTURE_COURS_RAPPORT_SCHEMA = {
+    "type": "object",
+    "description": "Réponse en mode rapport (sans ?eleve_id=) : lecture seule, aucune écriture.",
+    "properties": {
+        "cours_id": {"type": "integer"},
+        "intitule": {"type": "string", "example": "Potions avancées"},
+        "annee_academique": {"type": "string", "example": "2025-2026"},
+        "eleves": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "eleve_id": {"type": "integer"},
+                    "nom": {"type": "string"},
+                    "moyenne": {
+                        "type": "number",
+                        "nullable": True,
+                        "description": "null si l'élève n'a encore aucun résultat dans le cours.",
+                    },
+                    "statut": {"type": "string", "enum": ["reussi", "echec"], "nullable": True},
+                },
+            },
+        },
+    },
+}
+
+CLOTURE_COURS_DECISION_SCHEMA = {
+    "type": "object",
+    "description": "Réponse en mode décision (avec ?eleve_id=) : met à jour l'inscription de cet élève.",
+    "properties": {
+        "cours": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "intitule": {"type": "string"},
+                "annee_academique": {"type": "string"},
+            },
+        },
+        "eleve": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "nom": {"type": "string"},
+                "maison": {"type": "string"},
+            },
+        },
+        "resultats": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "examen_id": {"type": "integer"},
+                    "titre_examen": {"type": "string"},
+                    "note": {"type": "number"},
+                    "statut_examen": {
+                        "type": "string",
+                        "enum": ["reussi", "echec"],
+                        "nullable": True,
+                        "description": "Statut de CET examen s'il a déjà été clôturé, sinon null.",
+                    },
+                },
+            },
+        },
+        "moyenne_cours": {"type": "number"},
+        "seuil_retenu": {
+            "type": "number",
+            "description": "Moyenne des seuil_reussite des examens pris en compte.",
+        },
+        "decision_finale": {"type": "string", "enum": ["reussi", "echec"]},
+        "nouveau_statut_inscription": {"type": "string", "enum": ["en_cours", "valide"]},
+    },
+}
+
+MOYENNE_COURS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "cours_id": {"type": "integer"},
+        "moyenne": {"type": "number", "nullable": True},
+        "nombre_resultats": {"type": "integer"},
+    },
+}
+
+MON_DOSSIER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer"},
+        "nom": {"type": "string"},
+        "annee_etude": {"type": "integer"},
+        "maison": {"type": "string"},
+        "familier": {"type": "string", "nullable": True},
+        "statut": {"type": "string"},
+        "nombre_cours": {"type": "integer"},
+        "nombre_notes": {"type": "integer"},
     },
 }
 
@@ -288,6 +504,303 @@ PATHS = {
             },
         }
     },
+    "/cours/{id}/inscriptions": {
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "post": {
+            "tags": ["Inscriptions"],
+            "summary": "Inscrire un élève à ce cours",
+            "description": "Refusé si le cours a atteint sa capacité maximale ou si l'élève y est déjà inscrit.",
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {"schema": {"$ref": "#/components/schemas/InscriptionEcriture"}}
+                },
+            },
+            "responses": {
+                "201": {
+                    "description": "Inscription créée.",
+                    "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/Inscription"}}
+                    },
+                },
+                "400": _reponse_erreur("Cours complet, élève déjà inscrit, ou élève introuvable."),
+                "404": _reponse_erreur("Cours introuvable."),
+            },
+        },
+    },
+    "/cours/{id}/eleves": {
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "get": {
+            "tags": ["Inscriptions"],
+            "summary": "Lister les élèves inscrits à ce cours",
+            "description": (
+                "Endpoint utilisé pour la chasse au N+1 (voir PERFORMANCE.md). "
+                "`?eager=true` active joinedload sur eleve + maison."
+            ),
+            "parameters": [
+                {
+                    "name": "eager",
+                    "in": "query",
+                    "schema": {"type": "boolean", "default": False},
+                    "description": "Active le chargement anticipé (joinedload) au lieu du chargement paresseux.",
+                }
+            ],
+            "responses": {
+                "200": {
+                    "description": "Liste des élèves du cours.",
+                    "content": {
+                        "application/json": {
+                            "schema": {"type": "array", "items": {"$ref": "#/components/schemas/EleveDuCours"}}
+                        }
+                    },
+                },
+                "404": _reponse_erreur("Cours introuvable."),
+            },
+        },
+    },
+    "/cours/{id}/examens": {
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "get": {
+            "tags": ["Examens"],
+            "summary": "Lister les examens de ce cours",
+            "responses": {
+                "200": {
+                    "description": "Liste des examens.",
+                    "content": {
+                        "application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Examen"}}}
+                    },
+                },
+                "404": _reponse_erreur("Cours introuvable."),
+            },
+        },
+        "post": {
+            "tags": ["Examens"],
+            "summary": "Créer un examen pour ce cours",
+            "requestBody": {
+                "required": True,
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExamenEcriture"}}},
+            },
+            "responses": {
+                "201": {
+                    "description": "Examen créé.",
+                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Examen"}}},
+                },
+                "400": _reponse_erreur("Payload invalide."),
+                "404": _reponse_erreur("Cours introuvable."),
+            },
+        },
+    },
+    "/examens/{id}": {
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "get": {
+            "tags": ["Examens"],
+            "summary": "Obtenir un examen",
+            "responses": {
+                "200": {"description": "Examen trouvé.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Examen"}}}},
+                "404": _reponse_erreur("Examen introuvable."),
+            },
+        },
+        "put": {
+            "tags": ["Examens"],
+            "summary": "Modifier un examen",
+            "requestBody": {
+                "required": True,
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExamenEcriture"}}},
+            },
+            "responses": {
+                "200": {"description": "Examen modifié.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Examen"}}}},
+                "400": _reponse_erreur("Payload invalide."),
+                "404": _reponse_erreur("Examen introuvable."),
+            },
+        },
+        "delete": {
+            "tags": ["Examens"],
+            "summary": "Supprimer un examen",
+            "responses": {
+                "200": {"description": "Examen supprimé."},
+                "404": _reponse_erreur("Examen introuvable."),
+            },
+        },
+    },
+    "/examens/{id}/resultats": {
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "get": {
+            "tags": ["Résultats"],
+            "summary": "Lister les résultats de cet examen",
+            "responses": {
+                "200": {
+                    "description": "Liste des résultats.",
+                    "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Resultat"}}}},
+                },
+                "404": _reponse_erreur("Examen introuvable."),
+            },
+        },
+        "post": {
+            "tags": ["Résultats"],
+            "summary": "Saisir les résultats de cet examen en masse",
+            "description": (
+                "Validation atomique : si une seule entrée du payload est invalide "
+                "(élève non inscrit au cours, note hors bornes...), rien n'est écrit en base. "
+                "Réécrire la note d'un élève déjà noté efface son statut réussi/échec "
+                "précédent (il faut reclôturer l'examen pour le refixer)."
+            ),
+            "requestBody": {
+                "required": True,
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResultatsEcriture"}}},
+            },
+            "responses": {
+                "201": {
+                    "description": "Résultats enregistrés.",
+                    "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Resultat"}}}},
+                },
+                "400": _reponse_erreur("Payload invalide (voir le détail par entrée dans la réponse)."),
+                "404": _reponse_erreur("Examen introuvable."),
+            },
+        },
+    },
+    "/examens/{id}/cloture": {
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "post": {
+            "tags": ["Examens"],
+            "summary": "Clôturer un examen (réussi/échec par examen)",
+            "description": (
+                "Décide, pour chaque élève ayant un résultat à cet examen, s'il l'a "
+                "réussi ou échoué — jugement propre à CET examen, écrit sur le statut du "
+                "résultat (Resultat.statut). Ne met PAS à jour le statut de l'inscription "
+                "au cours : cette décision-là, basée sur la moyenne de tous les examens du "
+                "cours, se fait via POST /cours/{id}/cloture. Refusé (400) tant qu'un "
+                "élève du cours n'a pas de résultat pour cet examen. Idempotent."
+            ),
+            "responses": {
+                "200": {
+                    "description": "Clôture effectuée.",
+                    "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/ClotureExamenReponse"}}
+                    },
+                },
+                "400": _reponse_erreur(
+                    "Aucun résultat saisi pour cet examen, ou résultats manquants pour "
+                    "un ou plusieurs élèves du cours."
+                ),
+                "404": _reponse_erreur("Examen introuvable."),
+            },
+        },
+    },
+    "/cours/{id}/cloture": {
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "post": {
+            "tags": ["Cours"],
+            "summary": "Clôturer un cours (moyenne générale, statut d'inscription)",
+            "description": (
+                "Calcule la moyenne des examens passés par un élève dans ce cours, et en "
+                "tire la décision qui met à jour Inscription.statut — contrairement à la "
+                "clôture d'un examen, qui ne juge que cet examen-là (voir "
+                "/examens/{id}/cloture). Deux modes selon le paramètre `eleve_id` : sans, "
+                "un rapport en lecture seule sur toute la classe ; avec, la mise à jour "
+                "de l'inscription de cet élève précis, et lui seul."
+            ),
+            "parameters": [
+                {
+                    "name": "eleve_id",
+                    "in": "query",
+                    "required": False,
+                    "schema": {"type": "integer"},
+                    "description": (
+                        "Absent : mode rapport (tous les élèves, aucune écriture). "
+                        "Présent : met à jour l'inscription de cet élève uniquement."
+                    ),
+                }
+            ],
+            "responses": {
+                "200": {
+                    "description": "Rapport (sans eleve_id) ou décision (avec eleve_id).",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {"$ref": "#/components/schemas/ClotureCoursRapport"},
+                                    {"$ref": "#/components/schemas/ClotureCoursDecision"},
+                                ]
+                            }
+                        }
+                    },
+                },
+                "400": _reponse_erreur(
+                    "eleve_id non numérique, ou élève sans aucun résultat dans ce cours."
+                ),
+                "404": _reponse_erreur("Cours introuvable, ou élève non inscrit à ce cours."),
+            },
+        },
+    },
+    "/resultats": {
+        "get": {
+            "tags": ["Résultats"],
+            "summary": "Lister les résultats, filtrable par cours et/ou par examen",
+            "parameters": [
+                {"name": "cours_id", "in": "query", "schema": {"type": "integer"}},
+                {"name": "examen_id", "in": "query", "schema": {"type": "integer"}},
+            ],
+            "responses": {
+                "200": {
+                    "description": "Liste des résultats correspondant aux filtres.",
+                    "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Resultat"}}}},
+                }
+            },
+        }
+    },
+    "/cours/{id}/moyenne": {
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "get": {
+            "tags": ["Résultats"],
+            "summary": "Moyenne de tous les résultats du cours",
+            "responses": {
+                "200": {
+                    "description": "Moyenne calculée.",
+                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MoyenneCours"}}},
+                },
+                "404": _reponse_erreur("Cours introuvable."),
+            },
+        },
+    },
+    "/moi/cours": {
+        "get": {
+            "tags": ["Espace élève"],
+            "summary": "Mes cours",
+            "security": [{"XUserId": []}],
+            "responses": {
+                "200": {"description": "Cours de l'élève courant."},
+                "401": _reponse_erreur("Header X-User-Id manquant ou invalide."),
+                "403": _reponse_erreur("L'utilisateur résolu n'a pas le rôle élève."),
+            },
+        }
+    },
+    "/moi/notes": {
+        "get": {
+            "tags": ["Espace élève"],
+            "summary": "Mes notes",
+            "security": [{"XUserId": []}],
+            "responses": {
+                "200": {"description": "Résultats de l'élève courant, avec le statut réussi/échec par examen s'il est connu."},
+                "401": _reponse_erreur("Header X-User-Id manquant ou invalide."),
+                "403": _reponse_erreur("L'utilisateur résolu n'a pas le rôle élève."),
+            },
+        }
+    },
+    "/moi/dossier": {
+        "get": {
+            "tags": ["Espace élève"],
+            "summary": "Mon dossier",
+            "security": [{"XUserId": []}],
+            "responses": {
+                "200": {
+                    "description": "Dossier de l'élève courant.",
+                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MonDossier"}}},
+                },
+                "401": _reponse_erreur("Header X-User-Id manquant ou invalide."),
+                "403": _reponse_erreur("L'utilisateur résolu n'a pas le rôle élève."),
+            },
+        }
+    },
 }
 
 PATHS.update(_crud_paths("maisons", "Maisons", MAISON_SCHEMA, MAISON_ECRITURE_SCHEMA))
@@ -300,11 +813,12 @@ OPENAPI_SPEC = {
     "openapi": "3.1.0",
     "info": {
         "title": "Académie de Sorcellerie — API",
-        "version": "0.2.0",
+        "version": "0.4.0",
         "description": (
             "API pédagogique du cahier des charges \"Académie de Sorcellerie\". "
-            "Cette spec suit l'avancement réel du projet : jour 1 (modèles, CRUD, "
-            "connexion simulée) livré, jour 2 (inscriptions, examens) à venir."
+            "Jour 1 (modèles, CRUD, connexion simulée) et jour 2 (inscriptions, "
+            "examens, résultats, clôture d'examen et clôture de cours) livrés. "
+            "Jour 3 (compétences, tournois) à venir."
         ),
     },
     "servers": [{"url": "/", "description": "Serveur de développement local"}],
@@ -315,6 +829,10 @@ OPENAPI_SPEC = {
         {"name": "Professeurs"},
         {"name": "Cours"},
         {"name": "Eleves"},
+        {"name": "Inscriptions"},
+        {"name": "Examens"},
+        {"name": "Résultats"},
+        {"name": "Espace élève", "description": "Endpoints scopés sur l'élève résolu via X-User-Id."},
     ],
     "paths": PATHS,
     "components": {
@@ -330,6 +848,18 @@ OPENAPI_SPEC = {
             "EleveEcriture": ELEVE_ECRITURE_SCHEMA,
             "LoginRequest": LOGIN_REQUEST_SCHEMA,
             "Identite": IDENTITE_SCHEMA,
+            "Inscription": INSCRIPTION_SCHEMA,
+            "InscriptionEcriture": INSCRIPTION_ECRITURE_SCHEMA,
+            "EleveDuCours": ELEVE_DU_COURS_SCHEMA,
+            "Examen": EXAMEN_SCHEMA,
+            "ExamenEcriture": EXAMEN_ECRITURE_SCHEMA,
+            "Resultat": RESULTAT_SCHEMA,
+            "ResultatsEcriture": RESULTATS_ECRITURE_SCHEMA,
+            "ClotureExamenReponse": CLOTURE_EXAMEN_REPONSE_SCHEMA,
+            "ClotureCoursRapport": CLOTURE_COURS_RAPPORT_SCHEMA,
+            "ClotureCoursDecision": CLOTURE_COURS_DECISION_SCHEMA,
+            "MoyenneCours": MOYENNE_COURS_SCHEMA,
+            "MonDossier": MON_DOSSIER_SCHEMA,
         },
         "securitySchemes": {
             "XUserId": {
