@@ -6,7 +6,7 @@ Ce README documente l'état final du projet : installation, variables d'environn
 
 ## Avancement
 
-Jour 1 fait : modèles de données (`app/models/`, syntaxe déclarative typée SQLAlchemy 2.0), seed rejouable et idempotent (`seed.py`), CRUD complet sur Maison/Professeur/Cours/Élève (`app/routes/`), connexion simulée (`POST /login`, header `X-User-Id` via `app/auth.py`, démontré par `GET /whoami`), documentation OpenAPI (`app/openapi_spec.py`) servie à `/openapi.json` et affichée avec Scalar sur `/docs`.
+Jour 1 fait : modèles de données (`app/dal/models/`, syntaxe déclarative typée SQLAlchemy 2.0), seed rejouable et idempotent (`seed.py`), CRUD complet sur Maison/Professeur/Cours/Élève (`app/routes/`), connexion simulée (`POST /login`, header `X-User-Id` via `app/auth.py`, démontré par `GET /whoami`), documentation OpenAPI générée depuis les docstrings des routes (`app/openapi_generator.py`) servie à `/openapi.json` et affichée avec Scalar sur `/docs`.
 
 Jour 2 fait :
 
@@ -96,25 +96,42 @@ Pourquoi ajouter ça maintenant, hors planning : en testant l'API sans avoir lan
 │   ├── logging_config.py # logger applicatif + journal d'accès (before_request/after_request)
 │   ├── schemas.py         # schémas marshmallow de tous les payloads d'écriture (jour 4)
 │   ├── validation.py      # valider(schema, payload) -> (donnees, erreur) (jour 4)
-│   ├── openapi_spec.py   # spec OpenAPI écrite à la main (dict Python)
+│   ├── openapi_generator.py   # construit la spec OpenAPI depuis les docstrings des routes (apispec)
+│   ├── openapi_components.py  # schémas de composants réutilisés par $ref (ressources, erreurs, sécurité)
 │   ├── pagination.py     # pagination manuelle (page/par_page/total/pages) pour les listings jour 3
-│   ├── models/
-│   │   ├── __init__.py       # agrège les imports, nécessaire à db.create_all()
-│   │   ├── mixins.py          # TimestampMixin (created_at / updated_at)
-│   │   ├── enums.py           # StatutEleve, RoleUtilisateur, StatutInscription, StatutResultat, SourceDeblocage
-│   │   ├── annee_academique.py
-│   │   ├── maison.py
-│   │   ├── professeur.py
-│   │   ├── cours.py
-│   │   ├── eleve.py
-│   │   ├── utilisateur.py
-│   │   ├── inscription.py
-│   │   ├── examen.py
-│   │   ├── resultat.py
-│   │   ├── competence.py
-│   │   ├── maitrise.py
-│   │   ├── tournoi.py
-│   │   └── duel.py
+│   ├── dal/
+│   │   ├── __init__.py
+│   │   ├── models/
+│   │   │   ├── __init__.py       # agrège les imports, nécessaire à db.create_all()
+│   │   │   ├── mixins.py          # TimestampMixin (created_at / updated_at)
+│   │   │   ├── enums.py           # StatutEleve, RoleUtilisateur, StatutInscription, StatutResultat, SourceDeblocage
+│   │   │   ├── annee_academique.py
+│   │   │   ├── maison.py
+│   │   │   ├── professeur.py
+│   │   │   ├── cours.py
+│   │   │   ├── eleve.py
+│   │   │   ├── utilisateur.py
+│   │   │   ├── inscription.py
+│   │   │   ├── examen.py
+│   │   │   ├── resultat.py
+│   │   │   ├── competence.py
+│   │   │   ├── maitrise.py
+│   │   │   ├── tournoi.py
+│   │   │   └── duel.py
+│   │   └── dto/
+│   │       ├── __init__.py       # réexporte tous les DTO + vers_dict()
+│   │       ├── communs.py         # EleveMinimalDTO, vers_dict()
+│   │       ├── maisons.py
+│   │       ├── professeurs.py
+│   │       ├── cours.py
+│   │       ├── eleves.py
+│   │       ├── inscriptions.py
+│   │       ├── examens.py
+│   │       ├── resultats.py
+│   │       ├── competences.py
+│   │       ├── tournois.py
+│   │       ├── annees_academiques.py
+│   │       └── espace_eleve.py
 │   └── routes/
 │       ├── health.py             # GET /health
 │       ├── auth.py               # POST /login, GET /whoami
@@ -158,11 +175,13 @@ Pourquoi ajouter ça maintenant, hors planning : en testant l'API sans avoir lan
 
 Pourquoi une app factory plutôt qu'un fichier unique : le projet grossit vite (une dizaine de ressources sur 4 jours), et l'app factory permet de faire tourner les tests sur une configuration et une base isolées de celles du serveur de développement, sans dupliquer de code. Si votre équipe préfère un style plus simple (un seul fichier `app.py`), rien n'empêche de repartir de zéro sur cette base — le cahier des charges laisse le choix ouvert.
 
-Pourquoi un module par entité dans `app/models/` : ça garde chaque fichier court et les diffs Git lisibles à plusieurs sur la semaine. Les imports croisés entre entités passent par des chaînes de caractères dans `relationship(...)` plutôt que par des imports directs, pour éviter les imports circulaires — voir le bloc `if TYPE_CHECKING:` en haut de chaque fichier.
+Pourquoi un module par entité dans `app/dal/models/` : ça garde chaque fichier court et les diffs Git lisibles à plusieurs sur la semaine. Les imports croisés entre entités passent par des chaînes de caractères dans `relationship(...)` plutôt que par des imports directs, pour éviter les imports circulaires — voir le bloc `if TYPE_CHECKING:` en haut de chaque fichier. `app/dal/` sépare ces modèles (persistance, relations) de `app/dal/dto/` (la forme exacte de ce que chaque route renvoie en JSON, en dataclasses) : les deux vivent sous `dal/` parce que ce sont les deux façons de représenter une donnée, mais elles répondent à des questions différentes et n'ont aucune raison de partager un fichier.
 
 Pourquoi le CRUD Maison/Professeur/Cours/Élève n'est pas protégé par rôle : le critère de fin de jour 1 du cahier des charges veut que chaque ressource soit "créée, lue, modifiée et supprimée" librement pour vérifier que le CRUD fonctionne. Le mécanisme de rôle (`app/auth.py`, `role_requis(...)`) est prêt et testé (`GET /whoami`) ; le jour 2 l'utilise pour de bon sur l'espace élève (`/moi/...`), qui doit rester strictement scopé à l'élève qui consulte. Si votre équipe préfère verrouiller le CRUD dès maintenant, il suffit d'ajouter `@role_requis(RoleUtilisateur.ADMIN)` au-dessus des vues d'écriture.
 
-Pourquoi Scalar plutôt que Swagger UI ou flask-smorest : Scalar se résume à une page HTML statique (`app/routes/docs.py`) qui charge un script depuis un CDN et lit `/openapi.json` — aucune dépendance Python à ajouter à `requirements.txt`. C'est un choix d'outil d'affichage, pas d'architecture : n'importe quelle autre interface compatible OpenAPI (Swagger UI, Redoc...) fonctionnerait avec la même spec.
+Pourquoi Scalar plutôt que Swagger UI ou flask-smorest pour l'affichage : Scalar se résume à une page HTML statique (`app/routes/docs.py`) qui charge un script depuis un CDN et lit `/openapi.json` — aucune dépendance Python supplémentaire pour cette partie-là. C'est un choix d'outil d'affichage, pas d'architecture : n'importe quelle autre interface compatible OpenAPI (Swagger UI, Redoc...) fonctionnerait avec la même spec.
+
+Pourquoi la spec OpenAPI est générée depuis les docstrings des routes (`app/openapi_generator.py`, via `apispec`) plutôt qu'écrite à la main dans un dict séparé : un fichier `PATHS` à part grossissait avec chaque route ajoutée, avec le risque classique de l'oublier à jour. Chaque vue documente maintenant son propre résumé, ses paramètres et ses réponses dans un bloc YAML placé sous `---` en fin de docstring — au même endroit que le code qu'elle documente. Les schémas de composants réutilisés (forme de `Maison`, d'une erreur de validation...) restent centralisés dans `app/openapi_components.py`, puisqu'ils sont partagés par plusieurs routes, contrairement au résumé d'une opération qui n'appartient qu'à elle. Seule dépendance ajoutée à `requirements.txt` pour cette génération : `apispec` (+ `apispec-webframeworks`, `PyYAML`) — la spec est reconstruite une fois au démarrage de l'app, pas à chaque requête sur `/openapi.json`.
 
 Pourquoi deux statuts séparés, `Resultat.statut` et `Inscription.statut` : ce sont deux questions différentes. "Cet élève a-t-il réussi CET examen ?" se répond au niveau du résultat, avec le seuil de CET examen. "Cet élève a-t-il réussi LE COURS ?" se répond au niveau de l'inscription, avec la moyenne de TOUS ses examens dans ce cours. Les confondre revient à laisser un seul examen décider du sort de tout le cours, ce que le cahier des charges ne demande pas. D'où deux endpoints (`/examens/<id>/cloture` et `/cours/<id>/cloture`) plutôt qu'un seul qui ferait les deux à moitié.
 
