@@ -3,7 +3,13 @@ Flask-SQLAlchemy==3.1.1
 python-dotenv==1.0.1
 pytest==8.2.2
 marshmallow==3.21.3
+apispec==6.6.1
+apispec-webframeworks==1.2.0
+PyYAML==6.0.2
 
 # marshmallow ajouté au jour 4 pour la validation stricte des payloads
 # (voir app/schemas.py et app/validation.py). Pas de Flask-Migrate : le
-# projet recrée la base à chaque seed plutôt que de gérer des migrations
+# projet recrée la base à chaque seed plutôt que de gérer des migrations.
+# apispec + apispec-webframeworks + PyYAML : génération de /openapi.json à
+# partir des docstrings des routes (voir app/openapi_generator.py) plutôt
+# que d'un dict PATHS tenu à la main.

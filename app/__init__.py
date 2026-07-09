@@ -37,6 +37,14 @@ def create_app(config_name=None):
 
     register_blueprints(app)
 
+    # Construite une fois au démarrage à partir des docstrings des routes
+    # (voir app/openapi_generator.py) plutôt qu'à chaque appel à
+    # /openapi.json : ce n'est pas comme si les docstrings changeaient en
+    # cours d'exécution.
+    from app.openapi_generator import construire_spec
+
+    app.config["OPENAPI_SPEC"] = construire_spec(app)
+
     return app
 
 

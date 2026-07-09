@@ -5,6 +5,9 @@ types et bornes ; l'existence du professeur référencé et le rattachement
 sont des questions d'état de la base et non de forme du payload.
 
 Sortie typée (bonus) : voir app/dal/dto/cours.py::CoursDTO.
+
+Documentation OpenAPI (bonus) : voir app/openapi_generator.py — chaque vue
+porte son propre bloc YAML dans sa docstring.
 """
 
 from flask import Blueprint, jsonify, request
@@ -35,12 +38,55 @@ def _serialize(cours: Cours) -> dict:
 
 @cours_bp.get("")
 def lister_cours():
+    """Liste tous les cours.
+    ---
+    get:
+      tags:
+        - Cours
+      summary: Lister les cours
+      responses:
+        200:
+          description: Liste des cours.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Cours'
+    """
     cours = db.session.query(Cours).order_by(Cours.intitule).all()
     return jsonify([_serialize(c) for c in cours]), 200
 
 
 @cours_bp.get("/<int:cours_id>")
 def obtenir_cours(cours_id):
+    """Obtenir un cours par id.
+    ---
+    get:
+      tags:
+        - Cours
+      summary: Obtenir un cours par id
+      parameters:
+        - in: path
+          name: cours_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Cours trouvé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cours'
+        404:
+          description: Cours introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     cours = db.session.get(Cours, cours_id)
     if cours is None:
         return jsonify({"erreur": f"Cours {cours_id} introuvable."}), 404
@@ -49,6 +95,38 @@ def obtenir_cours(cours_id):
 
 @cours_bp.post("")
 def creer_cours():
+    """Créer un cours.
+    ---
+    post:
+      tags:
+        - Cours
+      summary: Créer un cours
+      description: >
+        Rattaché automatiquement à l'année académique la plus récente en
+        base (créée par seed.py) : l'année n'est pas encore exposée en
+        écriture par une ressource dédiée à ce stade du projet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CoursEcriture'
+      responses:
+        201:
+          description: Cours créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cours'
+        400:
+          description: >
+            Payload invalide, professeur introuvable, ou aucune année
+            académique en base.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+    """
     donnees, erreur = valider(CoursSchema(), request.get_json(silent=True))
     if erreur:
         return erreur
@@ -81,6 +159,45 @@ def creer_cours():
 
 @cours_bp.put("/<int:cours_id>")
 def modifier_cours(cours_id):
+    """Modifier un cours.
+    ---
+    put:
+      tags:
+        - Cours
+      summary: Modifier un cours
+      parameters:
+        - in: path
+          name: cours_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CoursEcriture'
+      responses:
+        200:
+          description: Cours modifié.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cours'
+        400:
+          description: Payload invalide, ou professeur introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+        404:
+          description: Cours introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     cours = db.session.get(Cours, cours_id)
     if cours is None:
         return jsonify({"erreur": f"Cours {cours_id} introuvable."}), 404
@@ -106,6 +223,29 @@ def modifier_cours(cours_id):
 
 @cours_bp.delete("/<int:cours_id>")
 def supprimer_cours(cours_id):
+    """Supprimer un cours.
+    ---
+    delete:
+      tags:
+        - Cours
+      summary: Supprimer un cours
+      parameters:
+        - in: path
+          name: cours_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Cours supprimé.
+        404:
+          description: Cours introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     cours = db.session.get(Cours, cours_id)
     if cours is None:
         return jsonify({"erreur": f"Cours {cours_id} introuvable."}), 404

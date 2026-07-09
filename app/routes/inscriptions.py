@@ -8,6 +8,9 @@ Validation stricte (jour 4) via InscriptionSchema pour eleve_id.
 
 Sortie typée (bonus) : voir app/dal/dto/inscriptions.py::InscriptionDTO et
 EleveDuCoursDTO.
+
+Documentation OpenAPI (bonus) : voir app/openapi_generator.py — chaque vue
+porte son propre bloc YAML dans sa docstring.
 """
 
 from datetime import date
@@ -49,6 +52,46 @@ def _serialize_inscription(inscription: Inscription) -> dict:
 
 @inscriptions_bp.post("/cours/<int:cours_id>/inscriptions")
 def inscrire_eleve(cours_id):
+    """Inscrire un élève à ce cours.
+    ---
+    post:
+      tags:
+        - Inscriptions
+      summary: Inscrire un élève à ce cours
+      description: Refusé si le cours a atteint sa capacité maximale ou si l'élève y est déjà inscrit.
+      parameters:
+        - in: path
+          name: cours_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InscriptionEcriture'
+      responses:
+        201:
+          description: Inscription créée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Inscription'
+        400:
+          description: Payload invalide, cours complet, élève déjà inscrit, ou élève introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+        404:
+          description: Cours introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     cours = db.session.get(Cours, cours_id)
     if cours is None:
         return jsonify({"erreur": f"Cours {cours_id} introuvable."}), 404
@@ -100,6 +143,42 @@ def lister_eleves_du_cours(cours_id):
     accédés dans la boucle ci-dessous, une requête par relation et par
     élève) : c'est le scénario N+1 documenté dans PERFORMANCE.md.
     `?eager=true` active `joinedload` pour tout charger en une requête.
+    ---
+    get:
+      tags:
+        - Inscriptions
+      summary: Lister les élèves inscrits à ce cours
+      description: >
+        Endpoint utilisé pour la chasse au N+1 (voir PERFORMANCE.md).
+        ?eager=true active joinedload sur eleve + maison.
+      parameters:
+        - in: path
+          name: cours_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+        - in: query
+          name: eager
+          schema:
+            type: boolean
+            default: false
+          description: Active le chargement anticipé (joinedload) au lieu du chargement paresseux.
+      responses:
+        200:
+          description: Liste des élèves du cours.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EleveDuCours'
+        404:
+          description: Cours introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
     """
     cours = db.session.get(Cours, cours_id)
     if cours is None:

@@ -1,3 +1,8 @@
+"""
+Documentation OpenAPI (bonus) : voir app/openapi_generator.py — chaque vue
+porte son propre bloc YAML dans sa docstring.
+"""
+
 from datetime import date
 
 from flask import Blueprint, jsonify, request
@@ -57,6 +62,35 @@ def _serialize_resultat(resultat: Resultat) -> dict:
 
 @examens_bp.get("/cours/<int:cours_id>/examens")
 def lister_examens_du_cours(cours_id):
+    """Liste les examens de ce cours.
+    ---
+    get:
+      tags:
+        - Examens
+      summary: Lister les examens de ce cours
+      parameters:
+        - in: path
+          name: cours_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Liste des examens.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Examen'
+        404:
+          description: Cours introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     if db.session.get(Cours, cours_id) is None:
         return jsonify({"erreur": f"Cours {cours_id} introuvable."}), 404
 
@@ -66,6 +100,45 @@ def lister_examens_du_cours(cours_id):
 
 @examens_bp.post("/cours/<int:cours_id>/examens")
 def creer_examen(cours_id):
+    """Créer un examen pour ce cours.
+    ---
+    post:
+      tags:
+        - Examens
+      summary: Créer un examen pour ce cours
+      parameters:
+        - in: path
+          name: cours_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExamenEcriture'
+      responses:
+        201:
+          description: Examen créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Examen'
+        400:
+          description: Payload invalide.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+        404:
+          description: Cours introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     if db.session.get(Cours, cours_id) is None:
         return jsonify({"erreur": f"Cours {cours_id} introuvable."}), 404
 
@@ -86,6 +159,33 @@ def creer_examen(cours_id):
 
 @examens_bp.get("/examens/<int:examen_id>")
 def obtenir_examen(examen_id):
+    """Obtenir un examen par id.
+    ---
+    get:
+      tags:
+        - Examens
+      summary: Obtenir un examen
+      parameters:
+        - in: path
+          name: examen_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Examen trouvé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Examen'
+        404:
+          description: Examen introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     examen = db.session.get(Examen, examen_id)
     if examen is None:
         return jsonify({"erreur": f"Examen {examen_id} introuvable."}), 404
@@ -94,6 +194,45 @@ def obtenir_examen(examen_id):
 
 @examens_bp.put("/examens/<int:examen_id>")
 def modifier_examen(examen_id):
+    """Modifier un examen.
+    ---
+    put:
+      tags:
+        - Examens
+      summary: Modifier un examen
+      parameters:
+        - in: path
+          name: examen_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExamenEcriture'
+      responses:
+        200:
+          description: Examen modifié.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Examen'
+        400:
+          description: Payload invalide.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+        404:
+          description: Examen introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     examen = db.session.get(Examen, examen_id)
     if examen is None:
         return jsonify({"erreur": f"Examen {examen_id} introuvable."}), 404
@@ -115,6 +254,29 @@ def modifier_examen(examen_id):
 
 @examens_bp.delete("/examens/<int:examen_id>")
 def supprimer_examen(examen_id):
+    """Supprimer un examen.
+    ---
+    delete:
+      tags:
+        - Examens
+      summary: Supprimer un examen
+      parameters:
+        - in: path
+          name: examen_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Examen supprimé.
+        404:
+          description: Examen introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     examen = db.session.get(Examen, examen_id)
     if examen is None:
         return jsonify({"erreur": f"Examen {examen_id} introuvable."}), 404
@@ -141,6 +303,55 @@ def saisir_resultats(examen_id):
     `statut` à `None` : la décision réussi/échec datait de l'ancienne note
     et ne veut plus rien dire une fois celle-ci changée. Il faut re-clôturer
     l'examen (POST /examens/<id>/cloture) pour la refixer.
+    ---
+    post:
+      tags:
+        - Résultats
+      summary: Saisir les résultats de cet examen en masse
+      description: >
+        Validation atomique : si une seule entrée du payload est invalide
+        (type incorrect, note hors bornes, élève non inscrit au cours...),
+        rien n'est écrit en base. La forme du payload est vérifiée par
+        ResultatsEcriture (jour 4, marshmallow) ; l'appartenance au cours
+        reste vérifiée à la main, après coup. Réécrire la note d'un élève
+        déjà noté efface son statut réussi/échec précédent (il faut
+        reclôturer l'examen pour le refixer).
+      parameters:
+        - in: path
+          name: examen_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResultatsEcriture'
+      responses:
+        201:
+          description: Résultats enregistrés.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Resultat'
+        400:
+          description: >
+            Payload invalide (voir le détail par entrée dans
+            champs.resultats), ou élève non inscrit au cours de cet examen.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+        404:
+          description: Examen introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
     """
     examen = db.session.get(Examen, examen_id)
     if examen is None:
@@ -194,6 +405,35 @@ def saisir_resultats(examen_id):
 
 @examens_bp.get("/examens/<int:examen_id>/resultats")
 def lister_resultats_examen(examen_id):
+    """Liste les résultats de cet examen.
+    ---
+    get:
+      tags:
+        - Résultats
+      summary: Lister les résultats de cet examen
+      parameters:
+        - in: path
+          name: examen_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Liste des résultats.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Resultat'
+        404:
+          description: Examen introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     if db.session.get(Examen, examen_id) is None:
         return jsonify({"erreur": f"Examen {examen_id} introuvable."}), 404
 
@@ -223,6 +463,47 @@ def cloturer_examen(examen_id):
     juger pour lui, et clôturer quand même reviendrait à décider à sa
     place. Rejouer la clôture sur les mêmes notes redonne les mêmes
     statuts (idempotent).
+    ---
+    post:
+      tags:
+        - Examens
+      summary: Clôturer un examen (réussi/échec par examen)
+      description: >
+        Décide, pour chaque élève ayant un résultat à cet examen, s'il l'a
+        réussi ou échoué — jugement propre à CET examen, écrit sur le
+        statut du résultat (Resultat.statut). Ne met PAS à jour le statut
+        de l'inscription au cours : cette décision-là, basée sur la moyenne
+        de tous les examens du cours, se fait via POST /cours/{id}/cloture.
+        Refusé (400) tant qu'un élève du cours n'a pas de résultat pour cet
+        examen. Idempotent.
+      parameters:
+        - in: path
+          name: examen_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Clôture effectuée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClotureExamenReponse'
+        400:
+          description: >
+            Aucun résultat saisi pour cet examen, ou résultats manquants
+            pour un ou plusieurs élèves du cours.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        404:
+          description: Examen introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
     """
     examen = db.session.get(Examen, examen_id)
     if examen is None:
@@ -298,6 +579,44 @@ def evaluer_competences(examen_id):
     relancer cet endpoint après un premier passage ne fait que déplacer les
     élèves déjà débloqués de "maitrises_creees" à "deja_debloquees", sans
     jamais dupliquer une ligne.
+    ---
+    post:
+      tags:
+        - Compétences
+      summary: Débloquer les compétences liées à cet examen (jour 3)
+      description: >
+        Pour chaque élève dont la note à cet examen atteint le note_min
+        d'une compétence à condition 'examen' liée à cet examen, crée la
+        Maitrise correspondante si elle n'existe pas déjà. Exige que
+        l'examen ait déjà été clôturé (POST /examens/{id}/cloture).
+        Idempotent : la contrainte unique (eleve_id, competence_id) sur
+        Maitrise empêche tout doublon.
+      parameters:
+        - in: path
+          name: examen_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Évaluation effectuée (éventuellement sans nouvelle Maitrise).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluerCompetencesReponse'
+        400:
+          description: Aucun résultat, ou examen pas encore clôturé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        404:
+          description: Examen introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
     """
     examen = db.session.get(Examen, examen_id)
     if examen is None:
@@ -491,6 +810,54 @@ def cloturer_cours(cours_id):
       (VALIDE si réussi, EN_COURS si échec) et renvoie son dossier complet
       sur ce cours : fiche du cours, fiche de l'élève, note à chaque
       examen, décision finale.
+    ---
+    post:
+      tags:
+        - Cours
+      summary: Clôturer un cours (moyenne générale, statut d'inscription)
+      description: >
+        Calcule la moyenne des examens passés par un élève dans ce cours,
+        et en tire la décision qui met à jour Inscription.statut —
+        contrairement à la clôture d'un examen, qui ne juge que cet
+        examen-là. Deux modes selon le paramètre eleve_id : sans, un
+        rapport en lecture seule sur toute la classe ; avec, la mise à
+        jour de l'inscription de cet élève précis, et lui seul.
+      parameters:
+        - in: path
+          name: cours_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+        - in: query
+          name: eleve_id
+          required: false
+          schema:
+            type: integer
+          description: >
+            Absent : mode rapport (tous les élèves, aucune écriture).
+            Présent : met à jour l'inscription de cet élève uniquement.
+      responses:
+        200:
+          description: Rapport (sans eleve_id) ou décision (avec eleve_id).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ClotureCoursRapport'
+                  - $ref: '#/components/schemas/ClotureCoursDecision'
+        400:
+          description: eleve_id non numérique, ou élève sans aucun résultat dans ce cours.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        404:
+          description: Cours introuvable, ou élève non inscrit à ce cours.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
     """
     cours = db.session.get(Cours, cours_id)
     if cours is None:
