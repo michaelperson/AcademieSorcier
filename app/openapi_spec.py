@@ -1397,6 +1397,7 @@ PATHS["/annees-academiques/{id}/cloture"] = {
     "post": {
         "tags": ["Passage d'année"],
         "summary": "Clôturer l'année (promotion, redoublement, diplomation)",
+        "security": [{"XUserId": []}],
         "description": (
             "L'endpoint métier le plus dense du projet. Pour chaque élève actif : "
             "moyenne générale sur ses inscriptions VALIDE de l'année (null si aucune, "
