@@ -7,6 +7,9 @@ données d'un autre en changeant un paramètre.
 
 Sortie typée (bonus) : voir app/dal/dto/espace_eleve.py::MonCoursDTO,
 MaNoteDTO, MonDossierDTO, MaCompetenceDTO, MonDuelDTO.
+
+Documentation OpenAPI (bonus) : voir app/openapi_generator.py — chaque vue
+porte son propre bloc YAML dans sa docstring.
 """
 
 from flask import Blueprint, g, jsonify
@@ -29,6 +32,30 @@ def _eleve_courant() -> Eleve:
 @espace_eleve_bp.get("/cours")
 @role_requis(RoleUtilisateur.ELEVE)
 def mes_cours():
+    """Cours de l'élève courant.
+    ---
+    get:
+      tags:
+        - Espace élève
+      summary: Mes cours
+      security:
+        - XUserId: []
+      responses:
+        200:
+          description: Cours de l'élève courant.
+        401:
+          description: Header X-User-Id manquant ou invalide.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        403:
+          description: L'utilisateur résolu n'a pas le rôle élève.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     inscriptions = (
         db.session.query(Inscription).filter_by(eleve_id=g.utilisateur_courant.eleve_id).all()
     )
@@ -49,6 +76,32 @@ def mes_cours():
 @espace_eleve_bp.get("/notes")
 @role_requis(RoleUtilisateur.ELEVE)
 def mes_notes():
+    """Mes notes.
+    ---
+    get:
+      tags:
+        - Espace élève
+      summary: Mes notes
+      security:
+        - XUserId: []
+      responses:
+        200:
+          description: >
+            Résultats de l'élève courant, avec le statut réussi/échec par
+            examen s'il est connu.
+        401:
+          description: Header X-User-Id manquant ou invalide.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        403:
+          description: L'utilisateur résolu n'a pas le rôle élève.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     resultats = (
         db.session.query(Resultat).filter_by(eleve_id=g.utilisateur_courant.eleve_id).all()
     )
@@ -69,6 +122,34 @@ def mes_notes():
 @espace_eleve_bp.get("/dossier")
 @role_requis(RoleUtilisateur.ELEVE)
 def mon_dossier():
+    """Mon dossier.
+    ---
+    get:
+      tags:
+        - Espace élève
+      summary: Mon dossier
+      security:
+        - XUserId: []
+      responses:
+        200:
+          description: Dossier de l'élève courant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MonDossier'
+        401:
+          description: Header X-User-Id manquant ou invalide.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        403:
+          description: L'utilisateur résolu n'a pas le rôle élève.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     eleve = _eleve_courant()
     if eleve is None:
         return jsonify({"erreur": "Dossier introuvable pour cet utilisateur."}), 404
@@ -89,7 +170,30 @@ def mon_dossier():
 @espace_eleve_bp.get("/competences")
 @role_requis(RoleUtilisateur.ELEVE)
 def mes_competences():
-    """Compétences débloquées par l'élève courant (jour 3)."""
+    """Compétences débloquées par l'élève courant (jour 3).
+    ---
+    get:
+      tags:
+        - Espace élève
+      summary: Mes compétences débloquées
+      security:
+        - XUserId: []
+      responses:
+        200:
+          description: Compétences débloquées par l'élève courant.
+        401:
+          description: Header X-User-Id manquant ou invalide.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        403:
+          description: L'utilisateur résolu n'a pas le rôle élève.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     maitrises = (
         db.session.query(Maitrise)
         .filter_by(eleve_id=g.utilisateur_courant.eleve_id)
@@ -119,6 +223,28 @@ def mes_tournois():
     une liste de duels pour en tirer nom du tournoi et de l'adversaire,
     exactement le genre d'accès qui tournerait en N+1 sans ça (voir
     PERFORMANCE.md).
+    ---
+    get:
+      tags:
+        - Espace élève
+      summary: Mon historique de tournois et de duels
+      security:
+        - XUserId: []
+      responses:
+        200:
+          description: Duels de l'élève courant, avec l'issue de chacun.
+        401:
+          description: Header X-User-Id manquant ou invalide.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        403:
+          description: L'utilisateur résolu n'a pas le rôle élève.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
     """
     eleve_id = g.utilisateur_courant.eleve_id
     duels = (

@@ -3,6 +3,9 @@ CRUD sur Professeur. Validation stricte (jour 4) via ProfesseurSchema —
 voir app/schemas.py et app/validation.py.
 
 Sortie typée (bonus) : voir app/dal/dto/professeurs.py::ProfesseurDTO.
+
+Documentation OpenAPI (bonus) : voir app/openapi_generator.py — chaque vue
+porte son propre bloc YAML dans sa docstring.
 """
 
 from flask import Blueprint, jsonify, request
@@ -31,12 +34,55 @@ def _serialize(professeur: Professeur) -> dict:
 
 @professeurs_bp.get("")
 def lister_professeurs():
+    """Liste tous les professeurs.
+    ---
+    get:
+      tags:
+        - Professeurs
+      summary: Lister les professeurs
+      responses:
+        200:
+          description: Liste des professeurs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Professeur'
+    """
     professeurs = db.session.query(Professeur).order_by(Professeur.nom).all()
     return jsonify([_serialize(p) for p in professeurs]), 200
 
 
 @professeurs_bp.get("/<int:professeur_id>")
 def obtenir_professeur(professeur_id):
+    """Obtenir un professeur par id.
+    ---
+    get:
+      tags:
+        - Professeurs
+      summary: Obtenir un professeur par id
+      parameters:
+        - in: path
+          name: professeur_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Professeur trouvé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Professeur'
+        404:
+          description: Professeur introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     professeur = db.session.get(Professeur, professeur_id)
     if professeur is None:
         return jsonify({"erreur": f"Professeur {professeur_id} introuvable."}), 404
@@ -45,6 +91,32 @@ def obtenir_professeur(professeur_id):
 
 @professeurs_bp.post("")
 def creer_professeur():
+    """Créer un professeur.
+    ---
+    post:
+      tags:
+        - Professeurs
+      summary: Créer un professeur
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfesseurEcriture'
+      responses:
+        201:
+          description: Professeur créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Professeur'
+        400:
+          description: Payload invalide (champ manquant ou type incorrect).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+    """
     donnees, erreur = valider(ProfesseurSchema(), request.get_json(silent=True))
     if erreur:
         return erreur
@@ -57,6 +129,45 @@ def creer_professeur():
 
 @professeurs_bp.put("/<int:professeur_id>")
 def modifier_professeur(professeur_id):
+    """Modifier un professeur.
+    ---
+    put:
+      tags:
+        - Professeurs
+      summary: Modifier un professeur
+      parameters:
+        - in: path
+          name: professeur_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfesseurEcriture'
+      responses:
+        200:
+          description: Professeur modifié.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Professeur'
+        400:
+          description: Payload invalide.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+        404:
+          description: Professeur introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     professeur = db.session.get(Professeur, professeur_id)
     if professeur is None:
         return jsonify({"erreur": f"Professeur {professeur_id} introuvable."}), 404
@@ -78,6 +189,29 @@ def modifier_professeur(professeur_id):
 
 @professeurs_bp.delete("/<int:professeur_id>")
 def supprimer_professeur(professeur_id):
+    """Supprimer un professeur.
+    ---
+    delete:
+      tags:
+        - Professeurs
+      summary: Supprimer un professeur
+      parameters:
+        - in: path
+          name: professeur_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Professeur supprimé.
+        404:
+          description: Professeur introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     professeur = db.session.get(Professeur, professeur_id)
     if professeur is None:
         return jsonify({"erreur": f"Professeur {professeur_id} introuvable."}), 404

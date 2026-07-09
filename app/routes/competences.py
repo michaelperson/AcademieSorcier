@@ -6,6 +6,9 @@ de compétences" du côté espace admin, contrairement au CRUD du jour 1
 qui restait volontairement ouvert pour être testé librement.
 
 Sortie typée (bonus) : voir app/dal/dto/competences.py::CompetenceDTO.
+
+Documentation OpenAPI (bonus) : voir app/openapi_generator.py — chaque vue
+porte son propre bloc YAML dans sa docstring.
 """
 
 from flask import Blueprint, jsonify, request
@@ -80,7 +83,36 @@ def _verifier_coherence_condition(donnees, competence_existante=None):
 
 @competences_bp.get("/competences")
 def lister_competences():
-    """Filtrable par ?categorie=..., paginé (?page=&par_page=)."""
+    """Filtrable par ?categorie=..., paginé (?page=&par_page=).
+    ---
+    get:
+      tags:
+        - Compétences
+      summary: Lister le catalogue de compétences
+      description: Filtrable par ?categorie=..., paginé (?page=&par_page=).
+      parameters:
+        - in: query
+          name: categorie
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: par_page
+          schema:
+            type: integer
+            default: 20
+      responses:
+        200:
+          description: Page de compétences.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompetencesPage'
+    """
     requete = db.session.query(Competence).order_by(Competence.nom)
 
     categorie = request.args.get("categorie")
@@ -93,6 +125,46 @@ def lister_competences():
 @competences_bp.post("/competences")
 @role_requis(RoleUtilisateur.ADMIN)
 def creer_competence():
+    """Ajouter une compétence au catalogue (admin).
+    ---
+    post:
+      tags:
+        - Compétences
+      summary: Ajouter une compétence au catalogue (admin)
+      security:
+        - XUserId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompetenceEcriture'
+      responses:
+        201:
+          description: Compétence créée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Competence'
+        400:
+          description: Payload invalide, ou condition_type incohérent avec examen_id/note_min.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+        401:
+          description: Header X-User-Id manquant ou invalide.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        403:
+          description: Réservé à l'admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     donnees, erreur = valider(CompetenceSchema(), request.get_json(silent=True))
     if erreur:
         return erreur
@@ -111,6 +183,33 @@ def creer_competence():
 
 @competences_bp.get("/competences/<int:competence_id>")
 def obtenir_competence(competence_id):
+    """Obtenir une compétence par id.
+    ---
+    get:
+      tags:
+        - Compétences
+      summary: Obtenir une compétence
+      parameters:
+        - in: path
+          name: competence_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Compétence trouvée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Competence'
+        404:
+          description: Compétence introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     competence = db.session.get(Competence, competence_id)
     if competence is None:
         return jsonify({"erreur": f"Compétence {competence_id} introuvable."}), 404
@@ -120,6 +219,53 @@ def obtenir_competence(competence_id):
 @competences_bp.put("/competences/<int:competence_id>")
 @role_requis(RoleUtilisateur.ADMIN)
 def modifier_competence(competence_id):
+    """Modifier une compétence (admin).
+    ---
+    put:
+      tags:
+        - Compétences
+      summary: Modifier une compétence (admin)
+      security:
+        - XUserId: []
+      parameters:
+        - in: path
+          name: competence_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompetenceEcriture'
+      responses:
+        200:
+          description: Compétence modifiée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Competence'
+        400:
+          description: Payload invalide.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+        403:
+          description: Réservé à l'admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        404:
+          description: Compétence introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     competence = db.session.get(Competence, competence_id)
     if competence is None:
         return jsonify({"erreur": f"Compétence {competence_id} introuvable."}), 404
@@ -149,6 +295,37 @@ def modifier_competence(competence_id):
 @competences_bp.delete("/competences/<int:competence_id>")
 @role_requis(RoleUtilisateur.ADMIN)
 def supprimer_competence(competence_id):
+    """Supprimer une compétence (admin).
+    ---
+    delete:
+      tags:
+        - Compétences
+      summary: Supprimer une compétence (admin)
+      security:
+        - XUserId: []
+      parameters:
+        - in: path
+          name: competence_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Compétence supprimée.
+        403:
+          description: Réservé à l'admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        404:
+          description: Compétence introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     competence = db.session.get(Competence, competence_id)
     if competence is None:
         return jsonify({"erreur": f"Compétence {competence_id} introuvable."}), 404

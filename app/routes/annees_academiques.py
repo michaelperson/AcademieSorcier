@@ -15,6 +15,9 @@ valoir : plutôt que de le promouvoir par défaut, il redouble (voir
 _cloturer_annee, le choix est documenté sur place).
 
 Sortie typée (bonus) : voir app/dal/dto/annees_academiques.py::AnneeAcademiqueDTO.
+
+Documentation OpenAPI (bonus) : voir app/openapi_generator.py — chaque vue
+porte son propre bloc YAML dans sa docstring.
 """
 
 from collections import Counter, defaultdict
@@ -49,6 +52,22 @@ def _serialize_annee(annee: AnneeAcademique) -> dict:
 
 @annees_bp.get("")
 def lister_annees():
+    """Liste les années académiques.
+    ---
+    get:
+      tags:
+        - Passage d'année
+      summary: Lister les années académiques
+      responses:
+        200:
+          description: Liste des années académiques.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AnneeAcademique'
+    """
     annees = db.session.query(AnneeAcademique).order_by(AnneeAcademique.libelle.desc()).all()
     return jsonify([_serialize_annee(a) for a in annees]), 200
 
@@ -56,6 +75,40 @@ def lister_annees():
 @annees_bp.post("")
 @role_requis(RoleUtilisateur.ADMIN)
 def creer_annee():
+    """Créer une année académique (admin).
+    ---
+    post:
+      tags:
+        - Passage d'année
+      summary: Créer une année académique (admin)
+      security:
+        - XUserId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnneeAcademiqueEcriture'
+      responses:
+        201:
+          description: Année créée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnneeAcademique'
+        400:
+          description: Payload invalide, ou libellé déjà utilisé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+        403:
+          description: Réservé à l'admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     donnees, erreur = valider(AnneeAcademiqueSchema(), request.get_json(silent=True))
     if erreur:
         return erreur
@@ -71,6 +124,33 @@ def creer_annee():
 
 @annees_bp.get("/<int:annee_id>")
 def obtenir_annee(annee_id):
+    """Obtenir une année académique par id.
+    ---
+    get:
+      tags:
+        - Passage d'année
+      summary: Obtenir une année académique
+      parameters:
+        - in: path
+          name: annee_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Année trouvée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnneeAcademique'
+        404:
+          description: Année académique introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     annee = db.session.get(AnneeAcademique, annee_id)
     if annee is None:
         return jsonify({"erreur": f"Année académique {annee_id} introuvable."}), 404
@@ -84,6 +164,52 @@ def modifier_annee(annee_id):
     du cahier des charges — avant de lancer la clôture. Refusé une fois
     l'année clôturée : changer le seuil rétroactivement rendrait la
     décision déjà prise incohérente avec la configuration affichée.
+    ---
+    put:
+      tags:
+        - Passage d'année
+      summary: Ajuster le seuil de promotion avant la clôture (admin)
+      description: "Refusé si l'année est déjà clôturée : la configuration est alors figée."
+      security:
+        - XUserId: []
+      parameters:
+        - in: path
+          name: annee_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnneeAcademiqueEcriture'
+      responses:
+        200:
+          description: Année modifiée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnneeAcademique'
+        400:
+          description: Payload invalide, ou année déjà clôturée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+        403:
+          description: Réservé à l'admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        404:
+          description: Année académique introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
     """
     annee = db.session.get(AnneeAcademique, annee_id)
     if annee is None:
@@ -183,6 +309,60 @@ def cloturer_annee(annee_id):
     modifier la valeur enregistrée) — pratique pour rejouer une
     simulation sans passer par PUT /annees-academiques/<id> à chaque
     essai.
+    ---
+    post:
+      tags:
+        - Passage d'année
+      summary: Clôturer l'année (promotion, redoublement, diplomation)
+      security:
+        - XUserId: []
+      description: >
+        L'endpoint métier le plus dense du projet. Pour chaque élève actif :
+        moyenne générale sur ses inscriptions VALIDE de l'année (null si
+        aucune, traité comme un redoublement) comparée au seuil ; promotion
+        si suffisante et année < 7, diplomation si suffisante et année == 7
+        (l'élève passe en statut diplômé, archivé mais pas supprimé),
+        redoublement sinon. Refusé (400) si l'année est déjà clôturée —
+        garde anti-rejeu sur cloturee_le, même principe que
+        Tournoi.cloture_le (jour 3).
+      parameters:
+        - in: path
+          name: annee_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+        - in: query
+          name: seuil
+          required: false
+          schema:
+            type: number
+          description: Court-circuite ponctuellement seuil_promotion sans modifier la valeur enregistrée.
+      responses:
+        200:
+          description: Clôture effectuée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClotureAnneeReponse'
+        400:
+          description: Année déjà clôturée, ou seuil non numérique.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        403:
+          description: Réservé à l'admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        404:
+          description: Année académique introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
     """
     annee = db.session.get(AnneeAcademique, annee_id)
     if annee is None:

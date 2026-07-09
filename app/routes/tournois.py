@@ -15,6 +15,9 @@ app/schemas.py::DuelSchema._verifier_participants).
 
 Sortie typée (bonus) : voir app/dal/dto/tournois.py::TournoiDTO, DuelDTO,
 DuelDetailleDTO et ClotureTournoiDTO.
+
+Documentation OpenAPI (bonus) : voir app/openapi_generator.py — chaque vue
+porte son propre bloc YAML dans sa docstring.
 """
 
 from collections import Counter
@@ -79,7 +82,36 @@ def _serialize_duel(duel: Duel) -> dict:
 
 @tournois_bp.get("/tournois")
 def lister_tournois():
-    """Filtrable par ?annee=..., paginé (?page=&par_page=)."""
+    """Filtrable par ?annee=..., paginé (?page=&par_page=).
+    ---
+    get:
+      tags:
+        - Tournois
+      summary: Lister les tournois
+      description: Filtrable par ?annee=..., paginé (?page=&par_page=).
+      parameters:
+        - in: query
+          name: annee
+          schema:
+            type: integer
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: par_page
+          schema:
+            type: integer
+            default: 20
+      responses:
+        200:
+          description: Page de tournois.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TournoisPage'
+    """
     requete = db.session.query(Tournoi).order_by(Tournoi.annee.desc(), Tournoi.nom)
 
     annee = request.args.get("annee")
@@ -96,6 +128,40 @@ def lister_tournois():
 @tournois_bp.post("/tournois")
 @role_requis(RoleUtilisateur.ADMIN)
 def creer_tournoi():
+    """Créer un tournoi (admin).
+    ---
+    post:
+      tags:
+        - Tournois
+      summary: Créer un tournoi (admin)
+      security:
+        - XUserId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TournoiEcriture'
+      responses:
+        201:
+          description: Tournoi créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tournoi'
+        400:
+          description: Payload invalide.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+        403:
+          description: Réservé à l'admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     donnees, erreur = valider(TournoiSchema(), request.get_json(silent=True))
     if erreur:
         return erreur
@@ -108,6 +174,33 @@ def creer_tournoi():
 
 @tournois_bp.get("/tournois/<int:tournoi_id>")
 def obtenir_tournoi(tournoi_id):
+    """Obtenir un tournoi par id.
+    ---
+    get:
+      tags:
+        - Tournois
+      summary: Obtenir un tournoi
+      parameters:
+        - in: path
+          name: tournoi_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Tournoi trouvé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tournoi'
+        404:
+          description: Tournoi introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+    """
     tournoi = db.session.get(Tournoi, tournoi_id)
     if tournoi is None:
         return jsonify({"erreur": f"Tournoi {tournoi_id} introuvable."}), 404
@@ -120,6 +213,33 @@ def lister_duels(tournoi_id):
     tournoi accède presque toujours au nom des participants, donc autant
     éviter le N+1 dès l'écriture plutôt que d'attendre de le mesurer comme
     au jour 2 (voir PERFORMANCE.md pour la démonstration complète).
+    ---
+    get:
+      tags:
+        - Tournois
+      summary: Lister les duels d'un tournoi
+      parameters:
+        - in: path
+          name: tournoi_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Liste des duels, avec les noms des participants.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DuelDetaille'
+        404:
+          description: Tournoi introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
     """
     if db.session.get(Tournoi, tournoi_id) is None:
         return jsonify({"erreur": f"Tournoi {tournoi_id} introuvable."}), 404
@@ -153,6 +273,46 @@ def enregistrer_duel(tournoi_id):
     modéliser une "programmation" du duel suivie d'une saisie du résultat
     : le cahier des charges parle d'"enregistrer les duels au fur et à
     mesure", ce qui correspond à consigner un fait accompli.
+    ---
+    post:
+      tags:
+        - Tournois
+      summary: Enregistrer un duel déjà joué
+      description: >
+        Refusé si le tournoi est déjà clôturé. DuelEcriture (jour 4,
+        marshmallow) vérifie aussi, au niveau du schéma, que les deux
+        participants sont différents et que vainqueur_id est bien l'un
+        des deux.
+      security:
+        - XUserId: []
+      parameters:
+        - in: path
+          name: tournoi_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DuelEcriture'
+      responses:
+        201:
+          description: Duel enregistré.
+        400:
+          description: Payload invalide, ou tournoi déjà clôturé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErreurValidation'
+        404:
+          description: Tournoi introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
     """
     tournoi = db.session.get(Tournoi, tournoi_id)
     if tournoi is None:
@@ -193,6 +353,46 @@ def cloturer_tournoi(tournoi_id):
     au hasard ou par id serait arbitraire sur une décision qui affecte la
     réputation d'une maison. Mieux vaut un duel de plus pour départager
     que biaiser le résultat en silence.
+    ---
+    post:
+      tags:
+        - Tournois
+      summary: Clôturer un tournoi (vainqueur, compétences, réputation)
+      description: >
+        Désigne le vainqueur (le plus de victoires en duel), débloque les
+        compétences à condition 'tournoi' pour ce vainqueur, et ajoute des
+        points de réputation à sa maison. Refusé si déjà clôturé (garde
+        anti-rejeu), si aucun duel n'est enregistré, ou en cas d'égalité
+        stricte entre plusieurs élèves — un départage automatique serait
+        arbitraire sur une décision qui affecte la réputation d'une maison.
+      security:
+        - XUserId: []
+      parameters:
+        - in: path
+          name: tournoi_id
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        200:
+          description: Clôture effectuée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClotureTournoiReponse'
+        400:
+          description: Déjà clôturé, aucun duel, ou égalité entre plusieurs élèves.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
+        404:
+          description: Tournoi introuvable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erreur'
     """
     tournoi = db.session.get(Tournoi, tournoi_id)
     if tournoi is None:

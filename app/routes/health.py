@@ -12,4 +12,14 @@ health_bp = Blueprint("health", __name__)
 
 @health_bp.get("/health")
 def health():
+    """Vérifie que l'API répond.
+    ---
+    get:
+      tags:
+        - Diagnostic
+      summary: Vérifier que l'API répond
+      responses:
+        200:
+          description: L'API est en ligne.
+    """
     return jsonify({"status": "ok"}), 200
