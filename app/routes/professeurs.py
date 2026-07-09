@@ -1,20 +1,32 @@
+"""
+CRUD sur Professeur. Validation stricte (jour 4) via ProfesseurSchema —
+voir app/schemas.py et app/validation.py.
+
+Sortie typée (bonus) : voir app/dal/dto/professeurs.py::ProfesseurDTO.
+"""
+
 from flask import Blueprint, jsonify, request
 
+from app.dal.dto import ProfesseurDTO, vers_dict
 from app.extensions import db
-from app.models import Professeur
+from app.dal.models import Professeur
+from app.schemas import ProfesseurSchema
+from app.validation import valider
 
 professeurs_bp = Blueprint("professeurs", __name__, url_prefix="/professeurs")
 
-CHAMPS_MODIFIABLES = ("nom", "matiere_enseignee", "anciennete")
+
+def _construire_dto(professeur: Professeur) -> ProfesseurDTO:
+    return ProfesseurDTO(
+        id=professeur.id,
+        nom=professeur.nom,
+        matiere_enseignee=professeur.matiere_enseignee,
+        anciennete=professeur.anciennete,
+    )
 
 
 def _serialize(professeur: Professeur) -> dict:
-    return {
-        "id": professeur.id,
-        "nom": professeur.nom,
-        "matiere_enseignee": professeur.matiere_enseignee,
-        "anciennete": professeur.anciennete,
-    }
+    return vers_dict(_construire_dto(professeur))
 
 
 @professeurs_bp.get("")
@@ -33,23 +45,11 @@ def obtenir_professeur(professeur_id):
 
 @professeurs_bp.post("")
 def creer_professeur():
-    payload = request.get_json(silent=True) or {}
+    donnees, erreur = valider(ProfesseurSchema(), request.get_json(silent=True))
+    if erreur:
+        return erreur
 
-    champs_requis = ["nom", "matiere_enseignee", "anciennete"]
-    manquants = [c for c in champs_requis if payload.get(c) in (None, "")]
-    if manquants:
-        return jsonify({"erreur": f"Champ(s) manquant(s) : {', '.join(manquants)}."}), 400
-
-    try:
-        anciennete = int(payload["anciennete"])
-    except (TypeError, ValueError):
-        return jsonify({"erreur": "anciennete doit être un entier."}), 400
-
-    professeur = Professeur(
-        nom=payload["nom"],
-        matiere_enseignee=payload["matiere_enseignee"],
-        anciennete=anciennete,
-    )
+    professeur = Professeur(**donnees)
     db.session.add(professeur)
     db.session.commit()
     return jsonify(_serialize(professeur)), 201
@@ -61,19 +61,16 @@ def modifier_professeur(professeur_id):
     if professeur is None:
         return jsonify({"erreur": f"Professeur {professeur_id} introuvable."}), 404
 
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
     if not payload:
         return jsonify({"erreur": "Aucune donnée à mettre à jour."}), 400
 
-    if "anciennete" in payload:
-        try:
-            payload["anciennete"] = int(payload["anciennete"])
-        except (TypeError, ValueError):
-            return jsonify({"erreur": "anciennete doit être un entier."}), 400
+    donnees, erreur = valider(ProfesseurSchema(), payload, partial=True)
+    if erreur:
+        return erreur
 
-    for champ in CHAMPS_MODIFIABLES:
-        if champ in payload:
-            setattr(professeur, champ, payload[champ])
+    for champ, valeur in donnees.items():
+        setattr(professeur, champ, valeur)
 
     db.session.commit()
     return jsonify(_serialize(professeur)), 200

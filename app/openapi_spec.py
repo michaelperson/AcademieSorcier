@@ -1,9 +1,8 @@
 """
-Spec OpenAPI écrite à la main plutôt que générée à partir des routes : à ce
-stade du projet (pas encore de marshmallow/pydantic, cf. jour 4), il n'y a
-rien à introspecter automatiquement. Un dict Python reste simple à faire
-évoluer au fil des jours suivants, sans dépendance supplémentaire dans
-requirements.txt.
+Spec OpenAPI écrite à la main plutôt que générée à partir des routes : un
+dict Python reste simple à faire évoluer au fil des jours, sans dépendance
+supplémentaire dans requirements.txt (même la validation marshmallow du
+jour 4 n'introspecte pas cette spec, les deux évoluent séparément).
 
 Servie telle quelle en JSON sur /openapi.json (voir app/routes/docs.py),
 et lue par Scalar sur /docs pour l'interface de documentation interactive.
@@ -13,6 +12,27 @@ ERREUR_SCHEMA = {
     "type": "object",
     "properties": {"erreur": {"type": "string"}},
     "required": ["erreur"],
+}
+
+ERREUR_VALIDATION_SCHEMA = {
+    "type": "object",
+    "description": (
+        "Forme prise par un 400 sur un endpoint d'écriture dont le payload est "
+        "invalide (jour 4, voir app/schemas.py et app/validation.py) : `champs` "
+        "reprend un message par champ fautif, pas juste un message générique."
+    ),
+    "properties": {
+        "erreur": {"type": "string", "example": "Payload invalide."},
+        "champs": {
+            "type": "object",
+            "additionalProperties": True,
+            "example": {
+                "annee_etude": ["Doit être compris entre 1 et 7."],
+                "maison_id": ["Ce champ est requis."],
+            },
+        },
+    },
+    "required": ["erreur", "champs"],
 }
 
 MAISON_SCHEMA = {
@@ -512,6 +532,73 @@ EVALUER_COMPETENCES_REPONSE_SCHEMA = {
     },
 }
 
+# --- Jour 4 ----------------------------------------------------------------
+
+ANNEE_ACADEMIQUE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "readOnly": True},
+        "libelle": {"type": "string", "example": "2025-2026"},
+        "seuil_promotion": {
+            "type": "number",
+            "example": 10.0,
+            "description": "Le \"seuil configurable\" du cahier des charges pour le passage de fin d'année.",
+        },
+        "cloturee_le": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": True,
+            "readOnly": True,
+            "description": "null tant que l'année n'est pas clôturée ; sert de garde anti-rejeu.",
+        },
+    },
+}
+
+ANNEE_ACADEMIQUE_ECRITURE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "libelle": {"type": "string", "example": "2026-2027"},
+        "seuil_promotion": {"type": "number", "minimum": 0, "maximum": 20, "example": 10.0},
+    },
+    "required": ["libelle", "seuil_promotion"],
+}
+
+CLOTURE_ANNEE_REPONSE_SCHEMA = {
+    "type": "object",
+    "description": "Le détail de chaque décision est dans `decisions`, un élément par élève actif traité.",
+    "properties": {
+        "annee_academique_id": {"type": "integer"},
+        "libelle": {"type": "string"},
+        "seuil_retenu": {
+            "type": "number",
+            "description": "seuil_promotion de l'année, sauf si l'appel a fourni ?seuil= en override.",
+        },
+        "nombre_eleves_actifs": {"type": "integer"},
+        "promus": {"type": "integer"},
+        "redoublants": {"type": "integer"},
+        "diplomes": {"type": "integer"},
+        "decisions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "eleve_id": {"type": "integer"},
+                    "nom": {"type": "string"},
+                    "moyenne_generale": {
+                        "type": "number",
+                        "nullable": True,
+                        "description": "null si l'élève n'a aucune inscription validée cette année (traité comme un redoublement).",
+                    },
+                    "annee_etude_avant": {"type": "integer"},
+                    "annee_etude_apres": {"type": "integer"},
+                    "decision": {"type": "string", "enum": ["promu", "redouble", "diplome"]},
+                    "statut_apres": {"type": "string", "enum": ["actif", "diplome", "renvoye"]},
+                },
+            },
+        },
+    },
+}
+
 
 def _reponse_erreur(description):
     return {
@@ -520,9 +607,25 @@ def _reponse_erreur(description):
     }
 
 
+def _reponse_erreur_validation(description):
+    """400 renvoyé par un endpoint d'écriture validé par marshmallow (jour 4) :
+    référence ErreurValidation plutôt que le schéma Erreur générique, pour
+    que la doc affiche bien l'enveloppe `champs` attendue.
+    """
+    return {
+        "description": description,
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErreurValidation"}}},
+    }
+
+
 def _crud_paths(nom_ressource, tag, schema_lecture, schema_ecriture, exemple_id=1):
     """Fabrique les deux chemins REST standards (collection + item) pour
     une ressource au CRUD symétrique (Maison, Professeur, Cours, Eleve).
+
+    Le 400 de POST/PUT référence ErreurValidation (jour 4) : ces quatre
+    ressources passent désormais par un schéma marshmallow avant toute
+    écriture (voir app/schemas.py), donc un payload invalide renvoie
+    systématiquement l'enveloppe {"erreur", "champs"}.
     """
     base = f"/{nom_ressource}"
     item = f"/{nom_ressource}/{{id}}"
@@ -555,7 +658,7 @@ def _crud_paths(nom_ressource, tag, schema_lecture, schema_ecriture, exemple_id=
                         "description": "Ressource créée.",
                         "content": {"application/json": {"schema": schema_lecture}},
                     },
-                    "400": _reponse_erreur("Payload invalide (champ manquant ou référence introuvable)."),
+                    "400": _reponse_erreur_validation("Payload invalide (champ manquant, type incorrect, ou référence introuvable)."),
                 },
             },
         },
@@ -592,7 +695,7 @@ def _crud_paths(nom_ressource, tag, schema_lecture, schema_ecriture, exemple_id=
                         "description": "Ressource modifiée.",
                         "content": {"application/json": {"schema": schema_lecture}},
                     },
-                    "400": _reponse_erreur("Payload invalide."),
+                    "400": _reponse_erreur_validation("Payload invalide."),
                     "404": _reponse_erreur("Ressource introuvable."),
                 },
             },
@@ -680,7 +783,9 @@ PATHS = {
                         "application/json": {"schema": {"$ref": "#/components/schemas/Inscription"}}
                     },
                 },
-                "400": _reponse_erreur("Cours complet, élève déjà inscrit, ou élève introuvable."),
+                "400": _reponse_erreur_validation(
+                    "Payload invalide, cours complet, élève déjà inscrit, ou élève introuvable."
+                ),
                 "404": _reponse_erreur("Cours introuvable."),
             },
         },
@@ -742,7 +847,7 @@ PATHS = {
                     "description": "Examen créé.",
                     "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Examen"}}},
                 },
-                "400": _reponse_erreur("Payload invalide."),
+                "400": _reponse_erreur_validation("Payload invalide."),
                 "404": _reponse_erreur("Cours introuvable."),
             },
         },
@@ -766,7 +871,7 @@ PATHS = {
             },
             "responses": {
                 "200": {"description": "Examen modifié.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Examen"}}}},
-                "400": _reponse_erreur("Payload invalide."),
+                "400": _reponse_erreur_validation("Payload invalide."),
                 "404": _reponse_erreur("Examen introuvable."),
             },
         },
@@ -797,7 +902,10 @@ PATHS = {
             "summary": "Saisir les résultats de cet examen en masse",
             "description": (
                 "Validation atomique : si une seule entrée du payload est invalide "
-                "(élève non inscrit au cours, note hors bornes...), rien n'est écrit en base. "
+                "(type incorrect, note hors bornes, élève non inscrit au cours...), rien "
+                "n'est écrit en base. La forme du payload (présence des champs, notes "
+                "entre 0 et 20) est vérifiée par ResultatsEcriture (jour 4, marshmallow) ; "
+                "l'appartenance au cours reste vérifiée à la main, après coup. "
                 "Réécrire la note d'un élève déjà noté efface son statut réussi/échec "
                 "précédent (il faut reclôturer l'examen pour le refixer)."
             ),
@@ -810,7 +918,10 @@ PATHS = {
                     "description": "Résultats enregistrés.",
                     "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Resultat"}}}},
                 },
-                "400": _reponse_erreur("Payload invalide (voir le détail par entrée dans la réponse)."),
+                "400": _reponse_erreur_validation(
+                    "Payload invalide (voir le détail par entrée dans `champs.resultats`), "
+                    "ou élève non inscrit au cours de cet examen."
+                ),
                 "404": _reponse_erreur("Examen introuvable."),
             },
         },
@@ -965,14 +1076,18 @@ PATHS = {
         "post": {
             "tags": ["Tournois"],
             "summary": "Enregistrer un duel déjà joué",
-            "description": "Refusé si le tournoi est déjà clôturé, ou si vainqueur_id n'est pas l'un des deux participants.",
+            "description": (
+                "Refusé si le tournoi est déjà clôturé. DuelEcriture (jour 4, marshmallow) "
+                "vérifie aussi, au niveau du schéma, que les deux participants sont "
+                "différents et que vainqueur_id est bien l'un des deux."
+            ),
             "requestBody": {
                 "required": True,
                 "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DuelEcriture"}}},
             },
             "responses": {
                 "201": {"description": "Duel enregistré."},
-                "400": _reponse_erreur("Payload invalide, ou tournoi déjà clôturé."),
+                "400": _reponse_erreur_validation("Payload invalide, ou tournoi déjà clôturé."),
                 "404": _reponse_erreur("Tournoi introuvable."),
             },
         },
@@ -1110,7 +1225,7 @@ PATHS["/competences"] = {
                 "description": "Compétence créée.",
                 "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Competence"}}},
             },
-            "400": _reponse_erreur("Payload invalide (condition_type incohérent avec examen_id/note_min)."),
+            "400": _reponse_erreur_validation("Payload invalide, ou condition_type incohérent avec examen_id/note_min."),
             "401": _reponse_erreur("Header X-User-Id manquant ou invalide."),
             "403": _reponse_erreur("Réservé à l'admin."),
         },
@@ -1142,7 +1257,7 @@ PATHS["/competences/{id}"] = {
                 "description": "Compétence modifiée.",
                 "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Competence"}}},
             },
-            "400": _reponse_erreur("Payload invalide."),
+            "400": _reponse_erreur_validation("Payload invalide."),
             "403": _reponse_erreur("Réservé à l'admin."),
             "404": _reponse_erreur("Compétence introuvable."),
         },
@@ -1188,7 +1303,7 @@ PATHS["/tournois"] = {
                 "description": "Tournoi créé.",
                 "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Tournoi"}}},
             },
-            "400": _reponse_erreur("Payload invalide."),
+            "400": _reponse_erreur_validation("Payload invalide."),
             "403": _reponse_erreur("Réservé à l'admin."),
         },
     },
@@ -1208,18 +1323,125 @@ PATHS["/tournois/{id}"] = {
     },
 }
 
+# Année académique et passage de fin d'année (jour 4). Comme pour
+# Compétence/Tournoi, écriture réservée à l'admin ; pas de DELETE (une
+# année qui a déjà des cours rattachés n'a pas vocation à disparaître).
+PATHS["/annees-academiques"] = {
+    "get": {
+        "tags": ["Passage d'année"],
+        "summary": "Lister les années académiques",
+        "responses": {
+            "200": {
+                "description": "Liste des années académiques.",
+                "content": {
+                    "application/json": {
+                        "schema": {"type": "array", "items": {"$ref": "#/components/schemas/AnneeAcademique"}}
+                    }
+                },
+            }
+        },
+    },
+    "post": {
+        "tags": ["Passage d'année"],
+        "summary": "Créer une année académique (admin)",
+        "security": [{"XUserId": []}],
+        "requestBody": {
+            "required": True,
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AnneeAcademiqueEcriture"}}},
+        },
+        "responses": {
+            "201": {
+                "description": "Année créée.",
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AnneeAcademique"}}},
+            },
+            "400": _reponse_erreur_validation("Payload invalide, ou libellé déjà utilisé."),
+            "403": _reponse_erreur("Réservé à l'admin."),
+        },
+    },
+}
+PATHS["/annees-academiques/{id}"] = {
+    "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+    "get": {
+        "tags": ["Passage d'année"],
+        "summary": "Obtenir une année académique",
+        "responses": {
+            "200": {
+                "description": "Année trouvée.",
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AnneeAcademique"}}},
+            },
+            "404": _reponse_erreur("Année académique introuvable."),
+        },
+    },
+    "put": {
+        "tags": ["Passage d'année"],
+        "summary": "Ajuster le seuil de promotion avant la clôture (admin)",
+        "description": "Refusé si l'année est déjà clôturée : la configuration est alors figée.",
+        "security": [{"XUserId": []}],
+        "requestBody": {
+            "required": True,
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AnneeAcademiqueEcriture"}}},
+        },
+        "responses": {
+            "200": {
+                "description": "Année modifiée.",
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AnneeAcademique"}}},
+            },
+            "400": _reponse_erreur_validation("Payload invalide, ou année déjà clôturée."),
+            "403": _reponse_erreur("Réservé à l'admin."),
+            "404": _reponse_erreur("Année académique introuvable."),
+        },
+    },
+}
+PATHS["/annees-academiques/{id}/cloture"] = {
+    "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+    "post": {
+        "tags": ["Passage d'année"],
+        "summary": "Clôturer l'année (promotion, redoublement, diplomation)",
+        "description": (
+            "L'endpoint métier le plus dense du projet. Pour chaque élève actif : "
+            "moyenne générale sur ses inscriptions VALIDE de l'année (null si aucune, "
+            "traité comme un redoublement) comparée au seuil ; promotion si suffisante "
+            "et année < 7, diplomation si suffisante et année == 7 (l'élève passe en "
+            "statut diplômé, archivé mais pas supprimé), redoublement sinon. "
+            "Refusé (400) si l'année est déjà clôturée — garde anti-rejeu sur "
+            "`cloturee_le`, même principe que `Tournoi.cloture_le` (jour 3)."
+        ),
+        "parameters": [
+            {
+                "name": "seuil",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "number"},
+                "description": "Court-circuite ponctuellement seuil_promotion sans modifier la valeur enregistrée.",
+            }
+        ],
+        "responses": {
+            "200": {
+                "description": "Clôture effectuée.",
+                "content": {
+                    "application/json": {"schema": {"$ref": "#/components/schemas/ClotureAnneeReponse"}}
+                },
+            },
+            "400": _reponse_erreur("Année déjà clôturée, ou seuil non numérique."),
+            "403": _reponse_erreur("Réservé à l'admin."),
+            "404": _reponse_erreur("Année académique introuvable."),
+        },
+    },
+}
+
 
 OPENAPI_SPEC = {
     "openapi": "3.1.0",
     "info": {
         "title": "Académie de Sorcellerie — API",
-        "version": "0.5.0",
+        "version": "1.0.0",
         "description": (
-            "API pédagogique du cahier des charges \"Académie de Sorcellerie\". "
-            "Jour 1 (modèles, CRUD, connexion simulée), jour 2 (inscriptions, "
-            "examens, résultats, clôture d'examen et clôture de cours) et jour 3 "
-            "(compétences, maîtrises, tournois, duels) livrés. Jour 4 (passage de "
-            "fin d'année, validation stricte) à venir."
+            "API pédagogique du cahier des charges \"Académie de Sorcellerie\", livrée "
+            "au complet : jour 1 (modèles, CRUD, connexion simulée), jour 2 "
+            "(inscriptions, examens, résultats, clôture d'examen et de cours), jour 3 "
+            "(compétences, maîtrises, tournois, duels) et jour 4 (passage de fin "
+            "d'année, validation stricte des payloads via marshmallow, seed à volume "
+            "réaliste)."
         ),
     },
     "servers": [{"url": "/", "description": "Serveur de développement local"}],
@@ -1236,11 +1458,13 @@ OPENAPI_SPEC = {
         {"name": "Compétences", "description": "Catalogue et déblocage automatique (jour 3)."},
         {"name": "Tournois", "description": "Tournois, duels et clôture (jour 3)."},
         {"name": "Espace élève", "description": "Endpoints scopés sur l'élève résolu via X-User-Id."},
+        {"name": "Passage d'année", "description": "Année académique et clôture de fin d'année (jour 4)."},
     ],
     "paths": PATHS,
     "components": {
         "schemas": {
             "Erreur": ERREUR_SCHEMA,
+            "ErreurValidation": ERREUR_VALIDATION_SCHEMA,
             "Maison": MAISON_SCHEMA,
             "MaisonEcriture": MAISON_ECRITURE_SCHEMA,
             "Professeur": PROFESSEUR_SCHEMA,
@@ -1273,6 +1497,9 @@ OPENAPI_SPEC = {
             "DuelDetaille": DUEL_DETAILLE_SCHEMA,
             "ClotureTournoiReponse": CLOTURE_TOURNOI_REPONSE_SCHEMA,
             "EvaluerCompetencesReponse": EVALUER_COMPETENCES_REPONSE_SCHEMA,
+            "AnneeAcademique": ANNEE_ACADEMIQUE_SCHEMA,
+            "AnneeAcademiqueEcriture": ANNEE_ACADEMIQUE_ECRITURE_SCHEMA,
+            "ClotureAnneeReponse": CLOTURE_ANNEE_REPONSE_SCHEMA,
         },
         "securitySchemes": {
             "XUserId": {

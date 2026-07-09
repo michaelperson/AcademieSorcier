@@ -1,43 +1,58 @@
-from datetime import date, datetime
+from datetime import date
 
 from flask import Blueprint, jsonify, request
 
+from app.dal.dto import (
+    ClotureExamenDTO,
+    CoursResumeDTO,
+    DecisionClotureCoursDTO,
+    EleveRapportCoursDTO,
+    EleveResumeDTO,
+    EvaluerCompetencesDTO,
+    ExamenDTO,
+    MaitriseEntreeDTO,
+    RapportClotureCoursDTO,
+    ResultatClotureDTO,
+    ResultatDTO,
+    ResultatExamenDTO,
+    vers_dict,
+)
 from app.extensions import db
-from app.models import Competence, Cours, Examen, Inscription, Maitrise, Resultat
-from app.models.enums import SourceDeblocage, StatutInscription, StatutResultat
+from app.dal.models import Competence, Cours, Examen, Inscription, Maitrise, Resultat
+from app.dal.models.enums import SourceDeblocage, StatutInscription, StatutResultat
 from app.routes.inscriptions import STATUTS_OCCUPANT_UNE_PLACE
+from app.schemas import ExamenModificationSchema, ExamenSchema, ResultatsEcritureSchema
+from app.validation import valider
 
 examens_bp = Blueprint("examens", __name__)
 
-NOTE_MIN = 0
-NOTE_MAX = 20
+
+def _construire_dto_examen(examen: Examen) -> ExamenDTO:
+    return ExamenDTO(
+        id=examen.id,
+        cours_id=examen.cours_id,
+        titre=examen.titre,
+        date=examen.date.isoformat(),
+        seuil_reussite=examen.seuil_reussite,
+    )
 
 
 def _serialize_examen(examen: Examen) -> dict:
-    return {
-        "id": examen.id,
-        "cours_id": examen.cours_id,
-        "titre": examen.titre,
-        "date": examen.date.isoformat(),
-        "seuil_reussite": examen.seuil_reussite,
-    }
+    return vers_dict(_construire_dto_examen(examen))
+
+
+def _construire_dto_resultat(resultat: Resultat) -> ResultatDTO:
+    return ResultatDTO(
+        id=resultat.id,
+        eleve_id=resultat.eleve_id,
+        examen_id=resultat.examen_id,
+        note=resultat.note,
+        statut=resultat.statut.value if resultat.statut else None,
+    )
 
 
 def _serialize_resultat(resultat: Resultat) -> dict:
-    return {
-        "id": resultat.id,
-        "eleve_id": resultat.eleve_id,
-        "examen_id": resultat.examen_id,
-        "note": resultat.note,
-        "statut": resultat.statut.value if resultat.statut else None,
-    }
-
-
-def _parser_date(valeur):
-    try:
-        return datetime.strptime(valeur, "%Y-%m-%d").date()
-    except (TypeError, ValueError):
-        return None
+    return vers_dict(_construire_dto_resultat(resultat))
 
 
 @examens_bp.get("/cours/<int:cours_id>/examens")
@@ -54,26 +69,15 @@ def creer_examen(cours_id):
     if db.session.get(Cours, cours_id) is None:
         return jsonify({"erreur": f"Cours {cours_id} introuvable."}), 404
 
-    payload = request.get_json(silent=True) or {}
-    champs_requis = ["titre", "date", "seuil_reussite"]
-    manquants = [c for c in champs_requis if payload.get(c) in (None, "")]
-    if manquants:
-        return jsonify({"erreur": f"Champ(s) manquant(s) : {', '.join(manquants)}."}), 400
-
-    date_examen = _parser_date(payload["date"])
-    if date_examen is None:
-        return jsonify({"erreur": "date doit être au format AAAA-MM-JJ."}), 400
-
-    try:
-        seuil_reussite = float(payload["seuil_reussite"])
-    except (TypeError, ValueError):
-        return jsonify({"erreur": "seuil_reussite doit être un nombre."}), 400
+    donnees, erreur = valider(ExamenSchema(), request.get_json(silent=True))
+    if erreur:
+        return erreur
 
     examen = Examen(
         cours_id=cours_id,
-        titre=payload["titre"],
-        date=date_examen,
-        seuil_reussite=seuil_reussite,
+        titre=donnees["titre"],
+        date=donnees["date"],
+        seuil_reussite=donnees["seuil_reussite"],
     )
     db.session.add(examen)
     db.session.commit()
@@ -94,24 +98,16 @@ def modifier_examen(examen_id):
     if examen is None:
         return jsonify({"erreur": f"Examen {examen_id} introuvable."}), 404
 
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
     if not payload:
         return jsonify({"erreur": "Aucune donnée à mettre à jour."}), 400
 
-    if "date" in payload:
-        date_examen = _parser_date(payload["date"])
-        if date_examen is None:
-            return jsonify({"erreur": "date doit être au format AAAA-MM-JJ."}), 400
-        examen.date = date_examen
+    donnees, erreur = valider(ExamenModificationSchema(), payload, partial=True)
+    if erreur:
+        return erreur
 
-    if "seuil_reussite" in payload:
-        try:
-            examen.seuil_reussite = float(payload["seuil_reussite"])
-        except (TypeError, ValueError):
-            return jsonify({"erreur": "seuil_reussite doit être un nombre."}), 400
-
-    if "titre" in payload:
-        examen.titre = payload["titre"]
+    for champ, valeur in donnees.items():
+        setattr(examen, champ, valeur)
 
     db.session.commit()
     return jsonify(_serialize_examen(examen)), 200
@@ -134,6 +130,13 @@ def saisir_resultats(examen_id):
     appel par élève. Validation atomique — si une seule entrée est
     invalide, rien n'est écrit en base (pas de saisie à moitié appliquée).
 
+    Depuis le jour 4, la forme du payload (présence des champs, notes
+    entre 0 et 20) est vérifiée par ResultatsEcritureSchema — voir
+    app/schemas.py. Ce qui reste vérifié ici, à la main : que chaque
+    eleve_id correspond bien à un élève inscrit au cours de cet examen,
+    une règle qui dépend de l'état de la base et pas seulement de la
+    forme du payload.
+
     Réécrire la note d'un élève qui avait déjà un résultat remet son
     `statut` à `None` : la décision réussi/échec datait de l'ancienne note
     et ne veut plus rien dire une fois celle-ci changée. Il faut re-clôturer
@@ -143,10 +146,9 @@ def saisir_resultats(examen_id):
     if examen is None:
         return jsonify({"erreur": f"Examen {examen_id} introuvable."}), 404
 
-    payload = request.get_json(silent=True) or {}
-    entrees = payload.get("resultats")
-    if not isinstance(entrees, list) or not entrees:
-        return jsonify({"erreur": "resultats doit être une liste non vide."}), 400
+    donnees, erreur = valider(ResultatsEcritureSchema(), request.get_json(silent=True))
+    if erreur:
+        return erreur
 
     inscrits_au_cours = {
         i.eleve_id
@@ -155,23 +157,9 @@ def saisir_resultats(examen_id):
 
     erreurs = []
     entrees_validees = []
-    for index, entree in enumerate(entrees):
-        if not isinstance(entree, dict):
-            erreurs.append({"index": index, "erreur": "chaque entrée doit être un objet."})
-            continue
-
-        eleve_id = entree.get("eleve_id")
-        note = entree.get("note")
-
-        if eleve_id is None:
-            erreurs.append({"index": index, "erreur": "eleve_id est requis."})
-            continue
-        try:
-            eleve_id = int(eleve_id)
-        except (TypeError, ValueError):
-            erreurs.append({"index": index, "erreur": "eleve_id doit être un entier."})
-            continue
-
+    for entree in donnees["resultats"]:
+        eleve_id = entree["eleve_id"]
+        note = entree["note"]
         if eleve_id not in inscrits_au_cours:
             erreurs.append(
                 {
@@ -180,22 +168,6 @@ def saisir_resultats(examen_id):
                 }
             )
             continue
-
-        try:
-            note = float(note)
-        except (TypeError, ValueError):
-            erreurs.append({"eleve_id": eleve_id, "erreur": "note doit être un nombre."})
-            continue
-
-        if not (NOTE_MIN <= note <= NOTE_MAX):
-            erreurs.append(
-                {
-                    "eleve_id": eleve_id,
-                    "erreur": f"note doit être comprise entre {NOTE_MIN} et {NOTE_MAX}.",
-                }
-            )
-            continue
-
         entrees_validees.append((eleve_id, note))
 
     if erreurs:
@@ -296,20 +268,16 @@ def cloturer_examen(examen_id):
 
     moyenne_examen = sum(r.note for r in resultats_examen) / len(resultats_examen)
 
-    return (
-        jsonify(
-            {
-                "examen_id": examen_id,
-                "seuil_reussite": examen.seuil_reussite,
-                "moyenne_examen": round(moyenne_examen, 2),
-                "resultats": [
-                    {"eleve_id": r.eleve_id, "note": r.note, "statut": r.statut.value}
-                    for r in resultats_examen
-                ],
-            }
-        ),
-        200,
+    dto = ClotureExamenDTO(
+        examen_id=examen_id,
+        seuil_reussite=examen.seuil_reussite,
+        moyenne_examen=round(moyenne_examen, 2),
+        resultats=[
+            ResultatClotureDTO(eleve_id=r.eleve_id, note=r.note, statut=r.statut.value)
+            for r in resultats_examen
+        ],
     )
+    return jsonify(vers_dict(dto)), 200
 
 
 @examens_bp.post("/examens/<int:examen_id>/evaluer-competences")
@@ -369,7 +337,7 @@ def evaluer_competences(examen_id):
                 .filter_by(eleve_id=resultat.eleve_id, competence_id=competence.id)
                 .one_or_none()
             )
-            entree = {"eleve_id": resultat.eleve_id, "competence": competence.nom}
+            entree = MaitriseEntreeDTO(eleve_id=resultat.eleve_id, competence=competence.nom)
             if existante is None:
                 db.session.add(
                     Maitrise(
@@ -386,17 +354,13 @@ def evaluer_competences(examen_id):
 
     db.session.commit()
 
-    return (
-        jsonify(
-            {
-                "examen_id": examen_id,
-                "competences_evaluees": [c.nom for c in competences],
-                "maitrises_creees": maitrises_creees,
-                "deja_debloquees": deja_debloquees,
-            }
-        ),
-        200,
+    dto = EvaluerCompetencesDTO(
+        examen_id=examen_id,
+        competences_evaluees=[c.nom for c in competences],
+        maitrises_creees=maitrises_creees,
+        deja_debloquees=deja_debloquees,
     )
+    return jsonify(vers_dict(dto)), 200
 
 
 def _resultats_eleve_dans_cours(eleve_id, cours_id):
@@ -444,25 +408,21 @@ def _rapport_cloture_cours(cours: Cours):
             _resultats_eleve_dans_cours(eleve.id, cours.id)
         )
         eleves.append(
-            {
-                "eleve_id": eleve.id,
-                "nom": eleve.nom,
-                "moyenne": moyenne,
-                "statut": statut.value if statut else None,
-            }
+            EleveRapportCoursDTO(
+                eleve_id=eleve.id,
+                nom=eleve.nom,
+                moyenne=moyenne,
+                statut=statut.value if statut else None,
+            )
         )
 
-    return (
-        jsonify(
-            {
-                "cours_id": cours.id,
-                "intitule": cours.intitule,
-                "annee_academique": cours.annee_academique.libelle,
-                "eleves": eleves,
-            }
-        ),
-        200,
+    dto = RapportClotureCoursDTO(
+        cours_id=cours.id,
+        intitule=cours.intitule,
+        annee_academique=cours.annee_academique.libelle,
+        eleves=eleves,
     )
+    return jsonify(vers_dict(dto)), 200
 
 
 def _decider_cloture_cours(cours: Cours, eleve_id: int):
@@ -490,32 +450,26 @@ def _decider_cloture_cours(cours: Cours, eleve_id: int):
     )
     db.session.commit()
 
-    return (
-        jsonify(
-            {
-                "cours": {
-                    "id": cours.id,
-                    "intitule": cours.intitule,
-                    "annee_academique": cours.annee_academique.libelle,
-                },
-                "eleve": {"id": eleve.id, "nom": eleve.nom, "maison": eleve.maison.nom},
-                "resultats": [
-                    {
-                        "examen_id": r.examen_id,
-                        "titre_examen": r.examen.titre,
-                        "note": r.note,
-                        "statut_examen": r.statut.value if r.statut else None,
-                    }
-                    for r in resultats
-                ],
-                "moyenne_cours": moyenne,
-                "seuil_retenu": seuil_moyen,
-                "decision_finale": statut.value,
-                "nouveau_statut_inscription": inscription.statut.value,
-            }
+    dto = DecisionClotureCoursDTO(
+        cours=CoursResumeDTO(
+            id=cours.id, intitule=cours.intitule, annee_academique=cours.annee_academique.libelle
         ),
-        200,
+        eleve=EleveResumeDTO(id=eleve.id, nom=eleve.nom, maison=eleve.maison.nom),
+        resultats=[
+            ResultatExamenDTO(
+                examen_id=r.examen_id,
+                titre_examen=r.examen.titre,
+                note=r.note,
+                statut_examen=r.statut.value if r.statut else None,
+            )
+            for r in resultats
+        ],
+        moyenne_cours=moyenne,
+        seuil_retenu=seuil_moyen,
+        decision_finale=statut.value,
+        nouveau_statut_inscription=inscription.statut.value,
     )
+    return jsonify(vers_dict(dto)), 200
 
 
 @examens_bp.post("/cours/<int:cours_id>/cloture")

@@ -4,27 +4,41 @@ section "Où continuer" du jour 1) : le cahier des charges du jour 1 veut
 que ces ressources soient testables librement en fin de journée.
 `reputation` n'est pas exposé en écriture : ce champ est piloté par la
 clôture d'un tournoi (jour 3), pas par un appel API direct.
+
+Validation stricte (jour 4) : les champs sont vérifiés par MaisonSchema
+(app/schemas.py) avant toute écriture — voir app/validation.py pour le
+format de réponse en cas de payload invalide.
+
+Sortie typée (bonus) : _construire_dto donne la forme exacte de la
+réponse (MaisonDTO, app/dal/dto/) ; _serialize la convertit en dict pour
+jsonify(). Le JSON produit ne change pas, seul le chemin pour l'obtenir
+passe maintenant par un type plutôt qu'un dict assemblé à la main.
 """
 
 from flask import Blueprint, jsonify, request
 
+from app.dal.dto import MaisonDTO, vers_dict
 from app.extensions import db
-from app.models import Maison
+from app.dal.models import Maison
+from app.schemas import MaisonSchema
+from app.validation import valider
 
 maisons_bp = Blueprint("maisons", __name__, url_prefix="/maisons")
 
-CHAMPS_MODIFIABLES = ("nom", "couleur", "fondateur", "valeurs")
+
+def _construire_dto(maison: Maison) -> MaisonDTO:
+    return MaisonDTO(
+        id=maison.id,
+        nom=maison.nom,
+        couleur=maison.couleur,
+        fondateur=maison.fondateur,
+        valeurs=maison.valeurs,
+        reputation=maison.reputation,
+    )
 
 
 def _serialize(maison: Maison) -> dict:
-    return {
-        "id": maison.id,
-        "nom": maison.nom,
-        "couleur": maison.couleur,
-        "fondateur": maison.fondateur,
-        "valeurs": maison.valeurs,
-        "reputation": maison.reputation,
-    }
+    return vers_dict(_construire_dto(maison))
 
 
 @maisons_bp.get("")
@@ -43,22 +57,14 @@ def obtenir_maison(maison_id):
 
 @maisons_bp.post("")
 def creer_maison():
-    payload = request.get_json(silent=True) or {}
+    donnees, erreur = valider(MaisonSchema(), request.get_json(silent=True))
+    if erreur:
+        return erreur
 
-    champs_requis = ["nom", "couleur", "fondateur"]
-    manquants = [c for c in champs_requis if not payload.get(c)]
-    if manquants:
-        return jsonify({"erreur": f"Champ(s) manquant(s) : {', '.join(manquants)}."}), 400
+    if db.session.query(Maison).filter_by(nom=donnees["nom"]).first() is not None:
+        return jsonify({"erreur": f"Une maison nommée {donnees['nom']!r} existe déjà."}), 400
 
-    if db.session.query(Maison).filter_by(nom=payload["nom"]).first() is not None:
-        return jsonify({"erreur": f"Une maison nommée {payload['nom']!r} existe déjà."}), 400
-
-    maison = Maison(
-        nom=payload["nom"],
-        couleur=payload["couleur"],
-        fondateur=payload["fondateur"],
-        valeurs=payload.get("valeurs"),
-    )
+    maison = Maison(**donnees)
     db.session.add(maison)
     db.session.commit()
     return jsonify(_serialize(maison)), 201
@@ -70,13 +76,16 @@ def modifier_maison(maison_id):
     if maison is None:
         return jsonify({"erreur": f"Maison {maison_id} introuvable."}), 404
 
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
     if not payload:
         return jsonify({"erreur": "Aucune donnée à mettre à jour."}), 400
 
-    for champ in CHAMPS_MODIFIABLES:
-        if champ in payload:
-            setattr(maison, champ, payload[champ])
+    donnees, erreur = valider(MaisonSchema(), payload, partial=True)
+    if erreur:
+        return erreur
+
+    for champ, valeur in donnees.items():
+        setattr(maison, champ, valeur)
 
     db.session.commit()
     return jsonify(_serialize(maison)), 200

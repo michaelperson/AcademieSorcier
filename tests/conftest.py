@@ -2,8 +2,8 @@ import pytest
 
 from app import create_app
 from app.extensions import db
-from app.models import AnneeAcademique, Cours, Eleve, Maison, Professeur, Utilisateur
-from app.models.enums import RoleUtilisateur
+from app.dal.models import AnneeAcademique, Cours, Eleve, Maison, Professeur, Utilisateur
+from app.dal.models.enums import RoleUtilisateur
 
 
 @pytest.fixture

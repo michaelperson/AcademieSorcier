@@ -4,79 +4,78 @@ monde (parcourir le catalogue n'a rien de sensible), écriture réservée à
 l'admin — le cahier des charges range explicitement "gérer le catalogue
 de compétences" du côté espace admin, contrairement au CRUD du jour 1
 qui restait volontairement ouvert pour être testé librement.
+
+Sortie typée (bonus) : voir app/dal/dto/competences.py::CompetenceDTO.
 """
 
 from flask import Blueprint, jsonify, request
 
 from app.auth import role_requis
+from app.dal.dto import CompetenceDTO, vers_dict
 from app.extensions import db
-from app.models import Competence, Examen
-from app.models.enums import RoleUtilisateur, SourceDeblocage
+from app.dal.models import Competence, Examen
+from app.dal.models.enums import RoleUtilisateur, SourceDeblocage
 from app.pagination import paginer
+from app.schemas import CompetenceModificationSchema, CompetenceSchema
+from app.validation import valider
 
 competences_bp = Blueprint("competences", __name__)
 
 
+def _construire_dto(competence: Competence) -> CompetenceDTO:
+    return CompetenceDTO(
+        id=competence.id,
+        nom=competence.nom,
+        categorie=competence.categorie,
+        description=competence.description,
+        condition_type=competence.condition_type.value,
+        examen_id=competence.examen_id,
+        note_min=competence.note_min,
+    )
+
+
 def _serialize_competence(competence: Competence) -> dict:
-    return {
-        "id": competence.id,
-        "nom": competence.nom,
-        "categorie": competence.categorie,
-        "description": competence.description,
-        "condition_type": competence.condition_type.value,
-        "examen_id": competence.examen_id,
-        "note_min": competence.note_min,
-    }
+    return vers_dict(_construire_dto(competence))
 
 
-def _valider_payload_competence(payload, competence_existante=None):
-    """Renvoie (donnees, erreur). `erreur` est None si tout est valide.
+def _verifier_coherence_condition(donnees, competence_existante=None):
+    """CompetenceSchema (jour 4) valide déjà les types et bornes de base.
+    Ce qui reste à vérifier ici, à la main : la cohérence entre
+    condition_type et (examen_id, note_min), qui dépend de l'existence en
+    base de l'examen référencé et, pour un PUT partiel, de l'état déjà
+    enregistré sur la ligne (ex. changer uniquement la description d'une
+    compétence à condition "examen" ne doit pas exiger de renvoyer
+    examen_id/note_min à chaque fois).
 
-    Un peu de validation à la main plutôt qu'un attendu jour 4
-    (marshmallow/pydantic) : on ne veut pas d'une Competence dont
-    condition_type == EXAMEN sans examen_id ni note_min, ni l'inverse
-    (un examen_id qui traînerait sur une compétence à condition "tournoi").
+    Mute `donnees` en place (force examen_id/note_min à None si la
+    condition est "tournoi"). Retourne un message d'erreur (str), ou None
+    si tout est cohérent.
     """
-    champs_requis = ["nom", "categorie", "description", "condition_type"]
-    manquants = [c for c in champs_requis if not payload.get(c)]
-    if competence_existante is None and manquants:
-        return None, f"Champ(s) manquant(s) : {', '.join(manquants)}."
+    condition_type = donnees.get("condition_type")
+    if condition_type is None and competence_existante is not None:
+        condition_type = competence_existante.condition_type.value
 
-    donnees = {}
-    for champ in ("nom", "categorie", "description"):
-        if champ in payload:
-            donnees[champ] = payload[champ]
-
-    if "condition_type" in payload:
-        try:
-            condition_type = SourceDeblocage(payload["condition_type"])
-        except ValueError:
-            return None, "condition_type doit être 'examen' ou 'tournoi'."
-        donnees["condition_type"] = condition_type
-    else:
-        condition_type = competence_existante.condition_type if competence_existante else None
-
-    if condition_type == SourceDeblocage.EXAMEN:
-        examen_id = payload.get("examen_id", competence_existante.examen_id if competence_existante else None)
-        note_min = payload.get("note_min", competence_existante.note_min if competence_existante else None)
+    if condition_type == SourceDeblocage.EXAMEN.value:
+        examen_id = donnees.get(
+            "examen_id", competence_existante.examen_id if competence_existante else None
+        )
+        note_min = donnees.get(
+            "note_min", competence_existante.note_min if competence_existante else None
+        )
         if examen_id is None or note_min is None:
-            return None, "condition_type 'examen' exige examen_id et note_min."
+            return "condition_type 'examen' exige examen_id et note_min."
         if db.session.get(Examen, examen_id) is None:
-            return None, f"Examen {examen_id} introuvable."
-        try:
-            note_min = float(note_min)
-        except (TypeError, ValueError):
-            return None, "note_min doit être un nombre."
+            return f"Examen {examen_id} introuvable."
         donnees["examen_id"] = examen_id
         donnees["note_min"] = note_min
-    elif condition_type == SourceDeblocage.TOURNOI:
+    elif condition_type == SourceDeblocage.TOURNOI.value:
         # Une compétence à condition "tournoi" n'est pas liée à un examen
         # précis : on force ces deux colonnes à rester vides, pour éviter
         # une combinaison incohérente (condition tournoi + examen_id posé).
         donnees["examen_id"] = None
         donnees["note_min"] = None
 
-    return donnees, None
+    return None
 
 
 @competences_bp.get("/competences")
@@ -94,10 +93,15 @@ def lister_competences():
 @competences_bp.post("/competences")
 @role_requis(RoleUtilisateur.ADMIN)
 def creer_competence():
-    payload = request.get_json(silent=True) or {}
-    donnees, erreur = _valider_payload_competence(payload)
+    donnees, erreur = valider(CompetenceSchema(), request.get_json(silent=True))
     if erreur:
-        return jsonify({"erreur": erreur}), 400
+        return erreur
+
+    erreur_coherence = _verifier_coherence_condition(donnees)
+    if erreur_coherence:
+        return jsonify({"erreur": erreur_coherence}), 400
+
+    donnees["condition_type"] = SourceDeblocage(donnees["condition_type"])
 
     competence = Competence(**donnees)
     db.session.add(competence)
@@ -120,13 +124,20 @@ def modifier_competence(competence_id):
     if competence is None:
         return jsonify({"erreur": f"Compétence {competence_id} introuvable."}), 404
 
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
     if not payload:
         return jsonify({"erreur": "Aucune donnée à mettre à jour."}), 400
 
-    donnees, erreur = _valider_payload_competence(payload, competence_existante=competence)
+    donnees, erreur = valider(CompetenceModificationSchema(), payload, partial=True)
     if erreur:
-        return jsonify({"erreur": erreur}), 400
+        return erreur
+
+    erreur_coherence = _verifier_coherence_condition(donnees, competence_existante=competence)
+    if erreur_coherence:
+        return jsonify({"erreur": erreur_coherence}), 400
+
+    if "condition_type" in donnees:
+        donnees["condition_type"] = SourceDeblocage(donnees["condition_type"])
 
     for champ, valeur in donnees.items():
         setattr(competence, champ, valeur)

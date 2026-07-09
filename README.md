@@ -1,8 +1,8 @@
-# Académie de Sorcellerie — squelette de départ
+# Académie de Sorcellerie — API backend
 
-Ceci est un point de départ, pas une base à compléter à l'identique : la structure des fichiers reste entre vos mains, comme le précise le cahier des charges. Ce squelette pose les choses qui seraient fastidieuses à remettre en place vous-mêmes en début de semaine : l'app factory Flask, la connexion SQLAlchemy, les modèles de données, le seed, le CRUD de base, la connexion simulée et la documentation API interactive.
+Backend Flask/SQLAlchemy du cahier des charges "Académie de Sorcellerie", livré au complet sur les quatre jours prévus : modèles de données, CRUD, connexion simulée, inscriptions et clôtures pédagogiques, compétences et tournois, puis passage de fin d'année et validation stricte des payloads.
 
-Le README complet (installation, variables d'environnement, seed, tests, exemples curl) attendu en livrable du jour 4 est à écrire par vous-même au fil du projet — celui-ci ne couvre que la mise en route de ce squelette.
+Ce README documente l'état final du projet : installation, variables d'environnement, structure, choix de conception, exemples curl couvrant tous les endpoints, et comment lancer le seed et les tests.
 
 ## Avancement
 
@@ -14,7 +14,7 @@ Inscription (`app/routes/inscriptions.py`) : `POST /cours/<id>/inscriptions` ins
 
 Examen et Résultat (`app/routes/examens.py`, `app/routes/resultats.py`) : CRUD examen rattaché à un cours, saisie des résultats en masse (`POST /examens/<id>/resultats`, un payload avec la liste des notes, validation atomique — soit tout est enregistré, soit rien), listing filtrable (`GET /resultats?cours_id=...&examen_id=...`) et moyenne de cours (`GET /cours/<id>/moyenne`).
 
-Clôture d'examen et clôture de cours — deux endpoints distincts, sur deux statuts distincts (spec précisée le 2026-07-08, après une première version qui les confondait) :
+Clôture d'examen et clôture de cours — deux endpoints distincts, sur deux statuts distincts :
 
 - `POST /examens/<id>/cloture` décide, pour chaque élève ayant un résultat à CET examen, s'il l'a réussi ou échoué. Écrit sur `Resultat.statut`, refuse (400) tant qu'un élève du cours n'a pas encore de résultat.
 - `POST /cours/<id>/cloture` calcule la moyenne d'un élève sur TOUS les examens du cours et en tire la mise à jour de `Inscription.statut`. Deux modes : sans `?eleve_id=`, un rapport en lecture seule sur toute la classe ; avec, la décision (et l'écriture en base) pour cet élève-là seulement.
@@ -50,17 +50,35 @@ Endpoint métier 2 — clôturer un tournoi (`POST /tournois/<id>/cloture`) : co
 
 Espace élève, deux ajouts : `GET /moi/competences` (les compétences débloquées par l'élève courant) et `GET /moi/tournois` (l'historique de ses duels, avec l'adversaire et l'issue — `gagne`, `perdu` ou `en_attente` si le duel n'a pas encore de vainqueur).
 
-Seed enrichi : 5 examens et 19 compétences (15 à condition `examen`, réparties sur 5 catégories à raison de 3 seuils de note chacune ; 4 à condition `tournoi`).
+Jour 4 fait — le dernier jour du cahier des charges :
 
-99 tests passent (`pytest`), dont les scénarios métier propres au jour 3 : idempotence du déblocage de compétence, déblocage + réputation à la clôture d'un tournoi, refus du rejeu d'une clôture, et refus en cas d'égalité.
+Validation stricte des payloads (`app/schemas.py`, `app/validation.py`) : toutes les routes d'écriture de la semaine (Maison, Professeur, Cours, Élève, Inscription, Examen, Résultats, Compétence, Tournoi, Duel, Année académique) passent désormais par un schéma marshmallow avant d'atteindre la moindre logique métier. Un payload invalide renvoie systématiquement :
 
-Reste à faire : jour 4 — validation stricte des payloads, passage de fin d'année, volume réaliste, documentation finale. Voir "Où continuer" plus bas.
+```json
+{"erreur": "Payload invalide.", "champs": {"annee_etude": ["Doit être compris entre 1 et 7."]}}
+```
+
+`champs` reprend un message précis par champ fautif — pas juste "requête invalide" — ce qui correspond à l'exigence du cahier des charges de "préciser le champ en erreur". Ce que marshmallow valide : la forme du payload (présence, type, bornes numériques, cohérence entre deux champs du même payload via `@validates_schema`, par exemple qu'un vainqueur de duel soit bien l'un des deux participants). Ce que marshmallow ne valide pas, et qui reste à la charge des routes : tout ce qui dépend de l'état de la base — un `maison_id` qui a le bon type mais ne correspond à aucune maison, un cours déjà complet, une compétence à condition `examen` dont le `examen_id` doit exister. La frontière est volontaire : un schéma ne devrait pas interroger la base, sous peine de mélanger deux couches de validation aux échecs très différents (400 côté forme, 400 ou 404 côté cohérence métier).
+
+Passage de fin d'année (`app/routes/annees_academiques.py`) : `POST /annees-academiques/<id>/cloture` referme la boucle laissée ouverte depuis le jour 1 (`StatutEleve` prévoyait déjà `diplome`, mais rien ne l'utilisait). Pour chaque élève actif, la moyenne générale se calcule sur ses inscriptions au statut `valide` de l'année en cours ; comparée au `seuil_promotion` de l'année (ou à un `?seuil=` fourni en query, sans toucher à la valeur enregistrée), trois issues :
+
+- moyenne suffisante et année d'étude < 7 : promotion (`annee_etude += 1`).
+- moyenne suffisante et année d'étude == 7 : diplomation — l'élève passe au statut `diplome`, son dossier, ses compétences et son historique restent consultables normalement (archivage, pas suppression).
+- moyenne insuffisante, ou aucune inscription validée cette année-là : redoublement. Ce dernier cas (aucune inscription validée) est un choix de conception assumé : plutôt que de promouvoir un élève faute de preuve du contraire, l'absence de résultat validé est traitée comme un échec — documenté dans le docstring de la fonction et couvert par `test_cloture_annee_sans_inscription_validee_redouble`.
+
+Garde anti-rejeu sur `AnneeAcademique.cloturee_le`, même principe que `Tournoi.cloture_le` (jour 3) : une année déjà clôturée refuse (400) toute nouvelle clôture, et son `seuil_promotion` devient figé (`PUT /annees-academiques/<id>` refuse aussi une fois clôturée).
+
+Volume réaliste dans le seed (`seed.py`) : 160 élèves (au lieu de 30), répartis sur les 7 années d'étude, 10 examens (un devoir de mi-parcours en plus de l'examen final par cours), 3 tournois déjà clôturés avec leur historique de duels, et l'ensemble des compétences déjà évaluées comme si l'année avait réellement eu lieu — inscriptions, résultats, statuts d'examen et de cours, maîtrises débloquées, tout est cohérent entre soi plutôt qu'aléatoire. Le seed reste idempotent (rejouable sans dupliquer quoi que ce soit) et déterministe (`random.Random(2026)`, mêmes notes générées à chaque exécution).
+
+Chasse au N+1, deuxième round : le réflexe posé au jour 2 s'applique aussi à une boucle métier côté écriture, pas seulement à un listing HTTP. Voir la section "Jour 4" de `PERFORMANCE.md` : 526 requêtes SQL pour une implémentation naïve de la clôture d'année (une requête d'inscriptions puis de résultats par élève) contre 50 pour l'implémentation groupée retenue, mesuré sur les 160 élèves du seed.
+
+112 tests passent (`pytest`), dont les scénarios propres au jour 4 : les trois issues du passage d'année sur trois profils différents (`test_annees_academiques.py`), le refus d'un second rejeu de clôture, et un échantillon représentatif de validations de payload avec vérification du champ fautif exact (`test_validation.py`).
 
 ### Gestion d'erreurs et logging
 
 Deux fichiers, deux responsabilités séparées :
 
-`app/error_handlers.py` centralise la conversion des exceptions en réponses JSON, avec `app.errorhandler(...)` — l'équivalent Flask d'un middleware d'exception (Flask n'a pas de chaîne de middlewares au sens Express ou Django). Trois niveaux, du plus spécifique au plus général : les `HTTPException` de Flask/Werkzeug (route inconnue, méthode non supportée — auparavant renvoyées en HTML, incohérent avec le reste de l'API), les `SQLAlchemyError` (avec `db.session.rollback()`, indispensable pour ne pas laisser la session dans un état invalide pour la requête suivante), et enfin `Exception` en filet de sécurité pour tout le reste. Ce mécanisme ne remplace pas les validations déjà faites route par route (champ manquant, cours complet...) : il couvre ce qu'aucune route ne peut anticiper.
+`app/error_handlers.py` centralise la conversion des exceptions en réponses JSON, avec `app.errorhandler(...)` — l'équivalent Flask d'un middleware d'exception (Flask n'a pas de chaîne de middlewares au sens Express ou Django). Trois niveaux, du plus spécifique au plus général : les `HTTPException` de Flask/Werkzeug (route inconnue, méthode non supportée — auparavant renvoyées en HTML, incohérent avec le reste de l'API), les `SQLAlchemyError` (avec `db.session.rollback()`, indispensable pour ne pas laisser la session dans un état invalide pour la requête suivante), et enfin `Exception` en filet de sécurité pour tout le reste. Ce mécanisme ne remplace pas la validation marshmallow ni les vérifications métier route par route : il couvre ce qu'aucune route ne peut anticiper.
 
 `app/logging_config.py` configure le logger applicatif (niveau piloté par `LOG_LEVEL`, sortie console toujours, fichier tournant optionnel dans `logs/` via `LOG_TO_FILE=True`) et un journal d'accès séparé (une ligne par requête : méthode, chemin, code retour, durée), via les hooks `before_request`/`after_request`.
 
@@ -76,6 +94,8 @@ Pourquoi ajouter ça maintenant, hors planning : en testant l'API sans avoir lan
 │   ├── auth.py           # lecture X-User-Id, décorateurs connexion_requise / role_requis
 │   ├── error_handlers.py # gestion centralisée des exceptions (HTTPException, SQLAlchemyError, Exception)
 │   ├── logging_config.py # logger applicatif + journal d'accès (before_request/after_request)
+│   ├── schemas.py         # schémas marshmallow de tous les payloads d'écriture (jour 4)
+│   ├── validation.py      # valider(schema, payload) -> (donnees, erreur) (jour 4)
 │   ├── openapi_spec.py   # spec OpenAPI écrite à la main (dict Python)
 │   ├── pagination.py     # pagination manuelle (page/par_page/total/pages) pour les listings jour 3
 │   ├── models/
@@ -96,21 +116,22 @@ Pourquoi ajouter ça maintenant, hors planning : en testant l'API sans avoir lan
 │   │   ├── tournoi.py
 │   │   └── duel.py
 │   └── routes/
-│       ├── health.py          # GET /health
-│       ├── auth.py            # POST /login, GET /whoami
-│       ├── docs.py            # GET /openapi.json, GET /docs (Scalar)
-│       ├── maisons.py         # CRUD Maison
-│       ├── professeurs.py     # CRUD Professeur
-│       ├── cours.py           # CRUD Cours
-│       ├── eleves.py          # CRUD Élève
-│       ├── inscriptions.py    # POST /cours/<id>/inscriptions, GET /cours/<id>/eleves (N+1)
-│       ├── examens.py         # CRUD Examen, résultats en masse, clôture d'examen, clôture de cours, évaluer-competences
-│       ├── resultats.py       # GET /resultats, GET /cours/<id>/moyenne
-│       ├── espace_eleve.py    # GET /moi/cours, /moi/notes, /moi/dossier, /moi/competences, /moi/tournois
-│       ├── competences.py     # CRUD Compétence (lecture publique, écriture admin), paginé + filtre catégorie
-│       └── tournois.py        # CRUD Tournoi/Duel (lecture publique, écriture admin), clôture de tournoi
+│       ├── health.py             # GET /health
+│       ├── auth.py               # POST /login, GET /whoami
+│       ├── docs.py               # GET /openapi.json, GET /docs (Scalar)
+│       ├── maisons.py            # CRUD Maison
+│       ├── professeurs.py        # CRUD Professeur
+│       ├── cours.py              # CRUD Cours
+│       ├── eleves.py             # CRUD Élève
+│       ├── inscriptions.py       # POST /cours/<id>/inscriptions, GET /cours/<id>/eleves (N+1)
+│       ├── examens.py            # CRUD Examen, résultats en masse, clôture d'examen, clôture de cours, évaluer-competences
+│       ├── resultats.py          # GET /resultats, GET /cours/<id>/moyenne
+│       ├── espace_eleve.py       # GET /moi/cours, /moi/notes, /moi/dossier, /moi/competences, /moi/tournois
+│       ├── competences.py        # CRUD Compétence (lecture publique, écriture admin), paginé + filtre catégorie
+│       ├── tournois.py           # CRUD Tournoi/Duel (lecture publique, écriture admin), clôture de tournoi
+│       └── annees_academiques.py # CRUD Année académique, POST /annees-academiques/<id>/cloture (jour 4)
 ├── tests/
-│   ├── conftest.py         # fixtures app / client / maison / professeur / cours / eleve(s) / utilisateurs
+│   ├── conftest.py              # fixtures app / client / maison / professeur / cours / eleve(s) / utilisateurs
 │   ├── test_health.py
 │   ├── test_auth.py
 │   ├── test_maisons.py
@@ -123,11 +144,13 @@ Pourquoi ajouter ça maintenant, hors planning : en testant l'API sans avoir lan
 │   ├── test_resultats.py
 │   ├── test_error_handlers.py
 │   ├── test_competences.py
-│   └── test_tournois.py
+│   ├── test_tournois.py
+│   ├── test_annees_academiques.py  # passage de fin d'année : promotion, redoublement, diplomation, anti-rejeu (jour 4)
+│   └── test_validation.py          # échantillon de validations marshmallow, format d'erreur (jour 4)
 ├── config.py             # Config (dev) / TestingConfig, dont LOG_LEVEL / LOG_TO_FILE
 ├── run.py                # lance le serveur de développement
-├── seed.py               # peuple la base (4 maisons, 30 élèves, 5 professeurs, 5 cours, 5 examens, 19 compétences, comptes)
-├── PERFORMANCE.md        # chasse au N+1 : méthode de mesure, résultats, correctif
+├── seed.py               # peuple la base (4 maisons, 160 élèves, 5 professeurs, 5 cours, 10 examens, 19 compétences, 3 tournois clôturés, comptes)
+├── PERFORMANCE.md        # chasse au N+1 : méthode de mesure, résultats, correctif (jour 2 et jour 4)
 ├── logs/                 # créé si LOG_TO_FILE=True (ignoré par git)
 ├── requirements.txt
 └── .env.example
@@ -141,15 +164,17 @@ Pourquoi le CRUD Maison/Professeur/Cours/Élève n'est pas protégé par rôle :
 
 Pourquoi Scalar plutôt que Swagger UI ou flask-smorest : Scalar se résume à une page HTML statique (`app/routes/docs.py`) qui charge un script depuis un CDN et lit `/openapi.json` — aucune dépendance Python à ajouter à `requirements.txt`. C'est un choix d'outil d'affichage, pas d'architecture : n'importe quelle autre interface compatible OpenAPI (Swagger UI, Redoc...) fonctionnerait avec la même spec.
 
-Pourquoi deux statuts séparés, `Resultat.statut` et `Inscription.statut` : ce sont deux questions différentes. "Cet élève a-t-il réussi CET examen ?" se répond au niveau du résultat, avec le seuil de CET examen. "Cet élève a-t-il réussi LE COURS ?" se répond au niveau de l'inscription, avec la moyenne de TOUS ses examens dans ce cours. Les confondre (comme le faisait une première version de cet endpoint) revient à laisser un seul examen décider du sort de tout le cours, ce que le cahier des charges ne demande pas. D'où deux endpoints (`/examens/<id>/cloture` et `/cours/<id>/cloture`) plutôt qu'un seul qui ferait les deux à moitié.
+Pourquoi deux statuts séparés, `Resultat.statut` et `Inscription.statut` : ce sont deux questions différentes. "Cet élève a-t-il réussi CET examen ?" se répond au niveau du résultat, avec le seuil de CET examen. "Cet élève a-t-il réussi LE COURS ?" se répond au niveau de l'inscription, avec la moyenne de TOUS ses examens dans ce cours. Les confondre revient à laisser un seul examen décider du sort de tout le cours, ce que le cahier des charges ne demande pas. D'où deux endpoints (`/examens/<id>/cloture` et `/cours/<id>/cloture`) plutôt qu'un seul qui ferait les deux à moitié.
 
-Pourquoi le mode sans `eleve_id` de `/cours/<id>/cloture` ne modifie rien : c'est un rapport, pas une clôture en masse. Clôturer tous les élèves d'un coup sans validation professeur par professeur serait un raccourci que le cahier des charges ne demande pas explicitement (il ne parle que d'un `eleve_id` facultatif, pas d'un mode "tout clôturer") ; le mode rapport permet de vérifier les moyennes avant de déclencher les mises à jour une par une.
+Pourquoi le mode sans `eleve_id` de `/cours/<id>/cloture` ne modifie rien : c'est un rapport, pas une clôture en masse. Clôturer tous les élèves d'un coup sans validation professeur par professeur serait un raccourci que le cahier des charges ne demande pas explicitement ; le mode rapport permet de vérifier les moyennes avant de déclencher les mises à jour une par une.
 
 Pourquoi le chargement anticipé (`joinedload`) est optionnel plutôt qu'activé par défaut : voir `PERFORMANCE.md`. En résumé, le coût existe (plus de colonnes ramenées par ligne) et n'a de sens que sur un accès en boucle — l'imposer partout serait une optimisation prématurée.
 
-Pourquoi l'écriture sur Compétence et Tournoi est réservée à l'admin, contrairement au CRUD ouvert du jour 1 : le cahier des charges distingue explicitement, pour le jour 3, les actions "administratives" (créer une compétence, organiser un tournoi) des consultations élève. Ce n'est pas une incohérence avec le choix du jour 1 (voir plus haut) mais un changement de nature : Maison/Professeur/Cours/Élève sont des données de référence qu'il fallait pouvoir manipuler librement pour vérifier le CRUD, alors que Compétence et Tournoi pilotent des effets de bord réels sur la réputation d'une maison — les protéger dès leur introduction évite d'avoir à revenir dessus plus tard. `GET /cours/<id>/eleves` et consorts restent des exemples de lecture ouverte au jour 1 ; ici, seule l'écriture change de régime, la lecture (catalogue de compétences, liste de tournois) reste publique.
+Pourquoi l'écriture sur Compétence et Tournoi est réservée à l'admin, contrairement au CRUD ouvert du jour 1 : le cahier des charges distingue explicitement, pour le jour 3, les actions "administratives" (créer une compétence, organiser un tournoi) des consultations élève. Ce n'est pas une incohérence avec le choix du jour 1 mais un changement de nature : Maison/Professeur/Cours/Élève sont des données de référence qu'il fallait pouvoir manipuler librement pour vérifier le CRUD, alors que Compétence et Tournoi pilotent des effets de bord réels sur la réputation d'une maison — les protéger dès leur introduction évite d'avoir à revenir dessus plus tard. La même règle s'applique à Année académique au jour 4, pour la même raison (une clôture d'année a des effets de bord réels sur le dossier de chaque élève).
 
-Pourquoi `joinedload()` est appliqué directement sur `GET /tournois/<id>/duels` et `GET /moi/tournois`, sans passer par un paramètre `?eager=` comme au jour 2 : ces deux listings chargent systématiquement les noms des élèves associés à chaque duel (`eleve_1`, `eleve_2`, `vainqueur`) pour construire la réponse — il n'existe pas de cas d'usage où ces informations ne seraient pas nécessaires, contrairement à `/cours/<id>/eleves` où le mode "sans eager" a un intérêt réel (mesuré dans `PERFORMANCE.md`). Rendre le chargement anticipé optionnel n'aurait ajouté qu'un paramètre inutile.
+Pourquoi marshmallow plutôt que pydantic : les deux auraient rempli le rôle, marshmallow a été préféré parce que son couple `Schema.load()` / `ValidationError.messages` colle exactement au format `(donnees, erreur)` déjà en place dans le projet depuis `_valider_payload_competence` (jour 3) — reprendre le même idiome partout plutôt que d'en introduire un second.
+
+Pourquoi la validation métier (existence d'une clé étrangère, cohérence `condition_type`/`examen_id`, capacité d'un cours) reste dans les routes et ne remonte pas dans les schémas marshmallow : un schéma décrit la forme d'un payload indépendamment de toute requête en base. Une compétence dont l'`examen_id` a le bon type mais ne correspond à aucun examen n'est pas un problème de forme, c'est un problème de cohérence avec l'état actuel de la base — la distinguer clairement évite qu'un schéma se mette à faire des requêtes SQL, ce qui le rendrait plus difficile à tester isolément.
 
 ## Mise en route
 
@@ -166,7 +191,8 @@ pip install -r requirements.txt
 copy .env.example .env        # Windows
 cp .env.example .env          # Linux / macOS
 
-# 4. Peupler la base (4 maisons, 30 élèves, 5 professeurs, 5 cours, un compte par personne + admin)
+# 4. Peupler la base (4 maisons, 160 élèves, 5 professeurs, 5 cours, 10 examens,
+#    19 compétences, 3 tournois clôturés, un compte par personne + admin)
 python seed.py
 
 # 5. Lancer le serveur
@@ -178,7 +204,18 @@ pytest
 
 L'environnement virtuel (`.venv/`) n'est pas versionné (voir `.gitignore`) : chaque personne de l'équipe le recrée localement à partir de `requirements.txt`.
 
-Important sur `DATABASE_URL` dans `.env` : laissez la ligne commentée par défaut. `config.py` utilise alors un chemin absolu (`<racine du projet>/academie.db`). Si vous la décommentez avec un chemin relatif comme `sqlite:///academie.db`, Flask-SQLAlchemy le résout par rapport au dossier `instance/` de Flask, pas à la racine du projet — vous auriez alors deux fichiers `.db` différents selon que la variable est définie ou non, avec `seed.py` qui peuple l'un et le serveur qui lit l'autre (symptôme : `OperationalError: no such table`, alors que le seed s'est pourtant bien déroulé).
+### Variables d'environnement (`.env`)
+
+| Variable | Rôle | Valeur par défaut si absente |
+|---|---|---|
+| `FLASK_ENV` | `development` ou `testing` — sélectionne la config dans `config.py` | `development` |
+| `SECRET_KEY` | Clé Flask (sessions, à terme un vrai mécanisme d'auth) | valeur de secours fixée dans `config.py`, à changer en production |
+| `DATABASE_URL` | Chemin de la base SQLite | **laissée commentée**, voir avertissement ci-dessous |
+| `SQLALCHEMY_ECHO` | `True` pour voir chaque requête SQL générée dans les logs | `False` |
+| `LOG_LEVEL` | Niveau du logger applicatif (`DEBUG`, `INFO`, `WARNING`...) | `INFO` |
+| `LOG_TO_FILE` | `True` pour dupliquer les logs dans `logs/` (fichier tournant) | `False` |
+
+Important sur `DATABASE_URL` : laissez la ligne commentée par défaut. `config.py` utilise alors un chemin absolu (`<racine du projet>/academie.db`). Si vous la décommentez avec un chemin relatif comme `sqlite:///academie.db`, Flask-SQLAlchemy le résout par rapport au dossier `instance/` de Flask, pas à la racine du projet — vous auriez alors deux fichiers `.db` différents selon que la variable est définie ou non, avec `seed.py` qui peuple l'un et le serveur qui lit l'autre (symptôme : `OperationalError: no such table`, alors que le seed s'est pourtant bien déroulé).
 
 ### Essayer rapidement
 
@@ -193,6 +230,11 @@ curl -X POST http://127.0.0.1:5000/login \
 curl http://127.0.0.1:5000/whoami -H "X-User-Id: 36"
 
 curl http://127.0.0.1:5000/maisons
+
+# Payload invalide : le champ fautif est nommé dans la réponse (jour 4)
+curl -X POST http://127.0.0.1:5000/maisons \
+  -H "Content-Type: application/json" -d '{"nom": "Pyrraxis"}'
+# -> 400 {"erreur": "Payload invalide.", "champs": {"couleur": [...], "fondateur": [...]}}
 
 # Inscrire un élève à un cours
 curl -X POST http://127.0.0.1:5000/cours/1/inscriptions \
@@ -232,25 +274,45 @@ curl -X POST http://127.0.0.1:5000/tournois/1/duels \
 
 curl -X POST http://127.0.0.1:5000/tournois/1/cloture -H "X-User-Id: 36"
 
+# Duel invalide : le vainqueur doit être l'un des deux participants (jour 4)
+curl -X POST http://127.0.0.1:5000/tournois/1/duels \
+  -H "Content-Type: application/json" -H "X-User-Id: 36" \
+  -d '{"eleve_1_id": 1, "eleve_2_id": 2, "vainqueur_id": 9999}'
+# -> 400 {"erreur": "Payload invalide.", "champs": {"vainqueur_id": [...]}}
+
 # Espace élève : compétences et historique de tournois de l'élève connecté
 curl http://127.0.0.1:5000/moi/competences -H "X-User-Id: 1"
 curl http://127.0.0.1:5000/moi/tournois -H "X-User-Id: 1"
+
+# Année académique : consulter, ajuster le seuil, puis clôturer (jour 4)
+curl http://127.0.0.1:5000/annees-academiques
+
+curl -X PUT http://127.0.0.1:5000/annees-academiques/1 \
+  -H "Content-Type: application/json" -H "X-User-Id: 36" \
+  -d '{"libelle": "2025-2026", "seuil_promotion": 10}'
+
+curl -X POST http://127.0.0.1:5000/annees-academiques/1/cloture -H "X-User-Id: 36"
+
+# Même appel avec un seuil différent, sans modifier celui enregistré
+curl -X POST "http://127.0.0.1:5000/annees-academiques/2/cloture?seuil=12" -H "X-User-Id: 36"
+
+# Rejouer la clôture d'une année déjà close : refusé
+curl -X POST http://127.0.0.1:5000/annees-academiques/1/cloture -H "X-User-Id: 36"
+# -> 400 {"erreur": "Cette année académique est déjà clôturée."}
 ```
 
 Tous les comptes créés par `seed.py` utilisent le mot de passe `motdepasse123` (élèves et professeurs) ou `admin123` (le compte admin), sur le modèle `prenom.nom@academie-sorcellerie.fr`.
 
-Ouvrez `http://127.0.0.1:5000/docs` dans un navigateur pour la documentation interactive (Scalar) : tous les endpoints listés ci-dessus y sont décrits avec leurs schémas de requête/réponse.
+Ouvrez `http://127.0.0.1:5000/docs` dans un navigateur pour la documentation interactive (Scalar) : tous les endpoints ci-dessus y sont décrits avec leurs schémas de requête/réponse, y compris le format d'erreur de validation (`ErreurValidation`) et les trois issues du passage d'année.
 
-## Où continuer
+## Projet complet
 
-Le jour 3 est complet au sens du cahier des charges. La suite, c'est le jour 4 :
+Les quatre jours du cahier des charges sont livrés : modèles et CRUD (jour 1), inscriptions/examens/résultats et leurs deux clôtures distinctes (jour 2), compétences/maîtrises/tournois (jour 3), passage de fin d'année et validation stricte (jour 4). 112 tests couvrent l'ensemble, le seed reproduit un volume proche d'une vraie promotion (160 élèves sur 7 années d'étude), et `PERFORMANCE.md` documente les deux endroits du projet où un N+1 réel a été mesuré puis corrigé.
 
-Validation stricte des payloads : les routes actuelles vérifient les champs à la main (présence, type, cohérence — voir par exemple `_valider_payload_competence` dans `app/routes/competences.py`), ce qui devient répétitif à mesure que le nombre de ressources augmente. Introduire marshmallow ou pydantic pour centraliser cette validation est le genre de refactor à faire une fois, plutôt que de continuer à l'écrire à la main route par route.
+Quelques pistes, hors cahier des charges, pour qui voudrait continuer au-delà :
 
-Passage de fin d'année : un endpoint qui, à partir des statuts d'inscription et des moyennes calculées au jour 2, décide pour chaque élève promotion, redoublement ou diplomation (au-delà de la dernière année d'étude). C'est la pièce qui referme la boucle du cahier des charges : jusqu'ici, `StatutEleve` (actif/diplome/renvoye, voir `app/models/enums.py`) existe mais rien ne le fait jamais passer à `diplome`.
+Une vraie authentification (mot de passe haché, session ou JWT) à la place de la connexion simulée par header `X-User-Id` — volontairement simplifiée pour rester centrée sur le métier pédagogique plutôt que sur l'auth.
 
-Volume réaliste dans le seed : les 30 élèves actuels suffisent pour tester manuellement, mais un jeu de données plus large (quelques centaines d'élèves, plusieurs années académiques) est ce qui permettrait de vérifier que la pagination introduite au jour 3 (`app/pagination.py`) et les requêtes de listing tiennent la charge, plutôt que de le supposer.
+Une gestion multi-années plus poussée : le passage de fin d'année crée une promotion pour l'année d'étude suivante, mais rien ne crée encore automatiquement la nouvelle `AnneeAcademique` ni ne réinscrit les élèves promus à leurs nouveaux cours — ça reste une étape manuelle après la clôture.
 
-Documentation finale : une collection Postman ou un `README.md` récapitulatif consolidé (au lieu du "point de départ, pas une base à compléter à l'identique" de l'introduction) sont attendus en livrable de fin de projet.
-
-Comme pour les jours précédents : ajoutez les nouveaux endpoints à `app/openapi_spec.py` au fur et à mesure, et si un nouvel endpoint de listing boucle sur une relation, vérifiez d'abord s'il y a un N+1 avant de l'écrire en dur — le réflexe posé dans `PERFORMANCE.md` vaut pour la suite du projet, pas seulement pour `/cours/<id>/eleves`.
+Une collection Postman à côté de ce README, pour qui préfère cliquer plutôt que copier des `curl` — la spec OpenAPI (`/openapi.json`) s'importe telle quelle dans Postman si le besoin s'en fait sentir.

@@ -27,7 +27,7 @@ def create_app(config_name=None):
     # import, db.create_all() ne créerait aucune table (rien ne les lui
     # aurait présentées), et les relationship() en chaîne de caractères
     # d'un module à l'autre ne se résoudraient pas.
-    from app import models  # noqa: F401
+    from app.dal import models  # noqa: F401
 
     from app.error_handlers import enregistrer_gestionnaires_erreurs
     from app.logging_config import configurer_logging
@@ -41,6 +41,7 @@ def create_app(config_name=None):
 
 
 def register_blueprints(app):
+    from app.routes.annees_academiques import annees_bp
     from app.routes.auth import auth_bp
     from app.routes.competences import competences_bp
     from app.routes.cours import cours_bp
@@ -68,3 +69,4 @@ def register_blueprints(app):
     app.register_blueprint(espace_eleve_bp)
     app.register_blueprint(competences_bp)
     app.register_blueprint(tournois_bp)
+    app.register_blueprint(annees_bp)
