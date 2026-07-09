@@ -7,6 +7,14 @@ Créer un tournoi, enregistrer un duel et clôturer le tournoi sont des
 actions d'admin (le cahier des charges les range explicitement du côté
 espace admin) ; consulter les tournois et leurs duels reste ouvert à
 tous, dans le même esprit que le catalogue de compétences.
+
+Validation stricte (jour 4) via TournoiSchema et DuelSchema — cette
+dernière vérifie aussi, au niveau du schéma, que les deux participants
+sont différents et que le vainqueur est l'un des deux (voir
+app/schemas.py::DuelSchema._verifier_participants).
+
+Sortie typée (bonus) : voir app/dal/dto/tournois.py::TournoiDTO, DuelDTO,
+DuelDetailleDTO et ClotureTournoiDTO.
 """
 
 from collections import Counter
@@ -16,10 +24,20 @@ from flask import Blueprint, jsonify, request
 from sqlalchemy.orm import joinedload
 
 from app.auth import role_requis
+from app.dal.dto import (
+    ClotureTournoiDTO,
+    DuelDetailleDTO,
+    DuelDTO,
+    EleveMinimalDTO,
+    TournoiDTO,
+    vers_dict,
+)
 from app.extensions import db
-from app.models import Competence, Duel, Eleve, Maitrise, Tournoi
-from app.models.enums import RoleUtilisateur, SourceDeblocage
+from app.dal.models import Competence, Duel, Eleve, Maitrise, Tournoi
+from app.dal.models.enums import RoleUtilisateur, SourceDeblocage
 from app.pagination import paginer
+from app.schemas import DuelSchema, TournoiSchema
+from app.validation import valider
 
 tournois_bp = Blueprint("tournois", __name__)
 
@@ -30,25 +48,33 @@ tournois_bp = Blueprint("tournois", __name__)
 POINTS_REPUTATION_VICTOIRE_TOURNOI = 10
 
 
+def _construire_dto_tournoi(tournoi: Tournoi) -> TournoiDTO:
+    return TournoiDTO(
+        id=tournoi.id,
+        nom=tournoi.nom,
+        annee=tournoi.annee,
+        maison_organisatrice_id=tournoi.maison_organisatrice_id,
+        vainqueur_eleve_id=tournoi.vainqueur_eleve_id,
+        cloture_le=tournoi.cloture_le.isoformat() if tournoi.cloture_le else None,
+    )
+
+
 def _serialize_tournoi(tournoi: Tournoi) -> dict:
-    return {
-        "id": tournoi.id,
-        "nom": tournoi.nom,
-        "annee": tournoi.annee,
-        "maison_organisatrice_id": tournoi.maison_organisatrice_id,
-        "vainqueur_eleve_id": tournoi.vainqueur_eleve_id,
-        "cloture_le": tournoi.cloture_le.isoformat() if tournoi.cloture_le else None,
-    }
+    return vers_dict(_construire_dto_tournoi(tournoi))
+
+
+def _construire_dto_duel(duel: Duel) -> DuelDTO:
+    return DuelDTO(
+        id=duel.id,
+        tournoi_id=duel.tournoi_id,
+        eleve_1_id=duel.eleve_1_id,
+        eleve_2_id=duel.eleve_2_id,
+        vainqueur_id=duel.vainqueur_id,
+    )
 
 
 def _serialize_duel(duel: Duel) -> dict:
-    return {
-        "id": duel.id,
-        "tournoi_id": duel.tournoi_id,
-        "eleve_1_id": duel.eleve_1_id,
-        "eleve_2_id": duel.eleve_2_id,
-        "vainqueur_id": duel.vainqueur_id,
-    }
+    return vers_dict(_construire_dto_duel(duel))
 
 
 @tournois_bp.get("/tournois")
@@ -70,22 +96,11 @@ def lister_tournois():
 @tournois_bp.post("/tournois")
 @role_requis(RoleUtilisateur.ADMIN)
 def creer_tournoi():
-    payload = request.get_json(silent=True) or {}
-    champs_requis = ["nom", "annee"]
-    manquants = [c for c in champs_requis if payload.get(c) in (None, "")]
-    if manquants:
-        return jsonify({"erreur": f"Champ(s) manquant(s) : {', '.join(manquants)}."}), 400
+    donnees, erreur = valider(TournoiSchema(), request.get_json(silent=True))
+    if erreur:
+        return erreur
 
-    try:
-        annee = int(payload["annee"])
-    except (TypeError, ValueError):
-        return jsonify({"erreur": "annee doit être un entier."}), 400
-
-    tournoi = Tournoi(
-        nom=payload["nom"],
-        annee=annee,
-        maison_organisatrice_id=payload.get("maison_organisatrice_id"),
-    )
+    tournoi = Tournoi(**donnees)
     db.session.add(tournoi)
     db.session.commit()
     return jsonify(_serialize_tournoi(tournoi)), 201
@@ -119,22 +134,16 @@ def lister_duels(tournoi_id):
         )
         .all()
     )
-    return (
-        jsonify(
-            [
-                {
-                    "id": d.id,
-                    "eleve_1": {"id": d.eleve_1_id, "nom": d.eleve_1.nom},
-                    "eleve_2": {"id": d.eleve_2_id, "nom": d.eleve_2.nom},
-                    "vainqueur": {"id": d.vainqueur_id, "nom": d.vainqueur.nom}
-                    if d.vainqueur
-                    else None,
-                }
-                for d in duels
-            ]
-        ),
-        200,
-    )
+    resultat = [
+        DuelDetailleDTO(
+            id=d.id,
+            eleve_1=EleveMinimalDTO(id=d.eleve_1_id, nom=d.eleve_1.nom),
+            eleve_2=EleveMinimalDTO(id=d.eleve_2_id, nom=d.eleve_2.nom),
+            vainqueur=EleveMinimalDTO(id=d.vainqueur_id, nom=d.vainqueur.nom) if d.vainqueur else None,
+        )
+        for d in duels
+    ]
+    return jsonify([vers_dict(d) for d in resultat]), 200
 
 
 @tournois_bp.post("/tournois/<int:tournoi_id>/duels")
@@ -151,34 +160,15 @@ def enregistrer_duel(tournoi_id):
     if tournoi.cloture_le is not None:
         return jsonify({"erreur": "Ce tournoi est déjà clôturé."}), 400
 
-    payload = request.get_json(silent=True) or {}
-    champs_requis = ["eleve_1_id", "eleve_2_id", "vainqueur_id"]
-    manquants = [c for c in champs_requis if payload.get(c) is None]
-    if manquants:
-        return jsonify({"erreur": f"Champ(s) manquant(s) : {', '.join(manquants)}."}), 400
+    donnees, erreur = valider(DuelSchema(), request.get_json(silent=True))
+    if erreur:
+        return erreur
 
-    try:
-        eleve_1_id = int(payload["eleve_1_id"])
-        eleve_2_id = int(payload["eleve_2_id"])
-        vainqueur_id = int(payload["vainqueur_id"])
-    except (TypeError, ValueError):
-        return jsonify({"erreur": "eleve_1_id, eleve_2_id et vainqueur_id doivent être des entiers."}), 400
-
-    if eleve_1_id == eleve_2_id:
-        return jsonify({"erreur": "eleve_1_id et eleve_2_id doivent être deux élèves différents."}), 400
-    if vainqueur_id not in (eleve_1_id, eleve_2_id):
-        return jsonify({"erreur": "vainqueur_id doit être l'un des deux participants."}), 400
-
-    for eleve_id in (eleve_1_id, eleve_2_id):
+    for eleve_id in (donnees["eleve_1_id"], donnees["eleve_2_id"]):
         if db.session.get(Eleve, eleve_id) is None:
             return jsonify({"erreur": f"Élève {eleve_id} introuvable."}), 400
 
-    duel = Duel(
-        tournoi_id=tournoi_id,
-        eleve_1_id=eleve_1_id,
-        eleve_2_id=eleve_2_id,
-        vainqueur_id=vainqueur_id,
-    )
+    duel = Duel(tournoi_id=tournoi_id, **donnees)
     db.session.add(duel)
     db.session.commit()
     return jsonify(_serialize_duel(duel)), 201
@@ -267,17 +257,13 @@ def cloturer_tournoi(tournoi_id):
 
     db.session.commit()
 
-    return (
-        jsonify(
-            {
-                "tournoi_id": tournoi_id,
-                "vainqueur_eleve_id": vainqueur_id,
-                "victoires": max_victoires,
-                "competences_debloquees": competences_debloquees,
-                "maison_id": vainqueur.maison_id,
-                "reputation_ajoutee": POINTS_REPUTATION_VICTOIRE_TOURNOI,
-                "nouvelle_reputation": vainqueur.maison.reputation,
-            }
-        ),
-        200,
+    dto = ClotureTournoiDTO(
+        tournoi_id=tournoi_id,
+        vainqueur_eleve_id=vainqueur_id,
+        victoires=max_victoires,
+        competences_debloquees=competences_debloquees,
+        maison_id=vainqueur.maison_id,
+        reputation_ajoutee=POINTS_REPUTATION_VICTOIRE_TOURNOI,
+        nouvelle_reputation=vainqueur.maison.reputation,
     )
+    return jsonify(vers_dict(dto)), 200

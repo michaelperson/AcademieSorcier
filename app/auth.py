@@ -11,7 +11,7 @@ from functools import wraps
 from flask import g, jsonify, request
 
 from app.extensions import db
-from app.models import Utilisateur
+from app.dal.models import Utilisateur
 
 
 def resoudre_utilisateur_courant():

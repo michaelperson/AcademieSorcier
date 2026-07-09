@@ -1,25 +1,35 @@
 """
 Espace admin du jour 2 : liste filtrable des résultats par cours ou par
 examen, moyenne par cours.
+
+Sortie typée (bonus) : voir app/dal/dto/resultats.py::ResultatDetailleDTO —
+distincte de ResultatDTO (app/dal/dto/examens.py) parce que ce listing
+ajoute cours_id, une information que l'URL ne donne pas déjà ici
+(contrairement aux endpoints scopés sous /examens/<id>/...).
 """
 
 from flask import Blueprint, jsonify, request
 
+from app.dal.dto import ResultatDetailleDTO, vers_dict
 from app.extensions import db
-from app.models import Cours, Examen, Resultat
+from app.dal.models import Cours, Examen, Resultat
 
 resultats_bp = Blueprint("resultats", __name__)
 
 
+def _construire_dto(resultat: Resultat) -> ResultatDetailleDTO:
+    return ResultatDetailleDTO(
+        id=resultat.id,
+        eleve_id=resultat.eleve_id,
+        examen_id=resultat.examen_id,
+        cours_id=resultat.examen.cours_id,
+        note=resultat.note,
+        statut=resultat.statut.value if resultat.statut else None,
+    )
+
+
 def _serialize_resultat(resultat: Resultat) -> dict:
-    return {
-        "id": resultat.id,
-        "eleve_id": resultat.eleve_id,
-        "examen_id": resultat.examen_id,
-        "cours_id": resultat.examen.cours_id,
-        "note": resultat.note,
-        "statut": resultat.statut.value if resultat.statut else None,
-    }
+    return vers_dict(_construire_dto(resultat))
 
 
 @resultats_bp.get("/resultats")

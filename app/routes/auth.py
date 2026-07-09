@@ -2,7 +2,7 @@ from flask import Blueprint, g, jsonify, request
 
 from app.auth import connexion_requise
 from app.extensions import db
-from app.models import Utilisateur
+from app.dal.models import Utilisateur
 
 auth_bp = Blueprint("auth", __name__)
 
